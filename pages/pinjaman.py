@@ -50,19 +50,73 @@ class PinjamanPage(BasePage):
 
         self._cb_anggota = self.lbl_combo(form_card, "Anggota *", 1, self._v_anggota, [])
         self.lbl_entry(form_card, "Jumlah (Rp) *",  2, self._v_jumlah)
-        self.lbl_entry(form_card, "Jangka (bulan)*", 3, self._v_jangka, width=10)
-        self.lbl_entry(form_card, "Bunga/bln (%) *", 4, self._v_bunga, width=10)
+
+        # ── Jangka angsuran: Spinbox + Slider ────────────────────────────
+        tk.Label(form_card, text="Jangka (kali) *", font=("Arial", 9),
+                 bg=C_WHITE, fg=C_DARK, width=16, anchor="w").grid(
+            row=3, column=0, sticky="w", padx=(12, 4), pady=(4, 0))
+
+        jangka_frame = tk.Frame(form_card, bg=C_WHITE)
+        jangka_frame.grid(row=3, column=1, sticky="w", padx=(0, 12), pady=(4, 0))
+
+        # Spinbox: user bisa ketik manual atau klik atas/bawah
+        self._spn_jangka = tk.Spinbox(
+            jangka_frame, textvariable=self._v_jangka,
+            from_=1, to=360, increment=1, width=6,
+            font=("Arial", 10, "bold"), fg="#1E3A5F",
+            relief="flat", bd=1, highlightthickness=1,
+            highlightbackground="#CBD5E0",
+            command=self._on_jangka_spin
+        )
+        self._spn_jangka.pack(side="left")
+        tk.Label(jangka_frame, text="kali", font=("Arial", 9),
+                 bg=C_WHITE, fg=C_GRAY).pack(side="left", padx=(4, 12))
+
+        # Tombol cepat preset jangka
+        preset_frame = tk.Frame(form_card, bg=C_WHITE)
+        preset_frame.grid(row=4, column=0, columnspan=2, sticky="w",
+                          padx=(12, 4), pady=(2, 4))
+        tk.Label(preset_frame, text="Preset:", font=("Arial", 8),
+                 bg=C_WHITE, fg=C_GRAY).pack(side="left", padx=(0, 4))
+        for preset in [6, 12, 18, 24, 36, 48, 60]:
+            tk.Button(
+                preset_frame, text=f"{preset}x",
+                font=("Arial", 8), bg="#EBF8FF", fg="#2B6CB0",
+                relief="flat", bd=0, padx=6, pady=2, cursor="hand2",
+                activebackground="#BEE3F8",
+                command=lambda v=preset: self._set_jangka(v)
+            ).pack(side="left", padx=2)
+
+        # Slider jangka (1–120)
+        slider_frame = tk.Frame(form_card, bg=C_WHITE)
+        slider_frame.grid(row=5, column=0, columnspan=2, sticky="ew",
+                          padx=12, pady=(0, 4))
+        tk.Label(slider_frame, text="1x", font=("Arial", 7),
+                 bg=C_WHITE, fg=C_GRAY).pack(side="left")
+        self._slider_jangka = tk.Scale(
+            slider_frame, from_=1, to=120,
+            orient="horizontal", variable=self._v_jangka,
+            showvalue=False, length=180,
+            bg=C_WHITE, fg="#2B6CB0",
+            troughcolor="#EBF8FF", highlightthickness=0,
+            command=lambda _: self._update_preview()
+        )
+        self._slider_jangka.pack(side="left", padx=4)
+        tk.Label(slider_frame, text="120x", font=("Arial", 7),
+                 bg=C_WHITE, fg=C_GRAY).pack(side="left")
+
+        self.lbl_entry(form_card, "Bunga/bln (%) *", 6, self._v_bunga, width=10)
         tk.Label(form_card, text="Tanggal *", font=("Arial", 9),
                  bg=C_WHITE, fg=C_DARK, width=16, anchor="w").grid(
-            row=5, column=0, sticky="w", padx=(12, 4), pady=4)
+            row=7, column=0, sticky="w", padx=(12, 4), pady=4)
         self._dp_tgl = DatePickerWidget(form_card, label="", bg=C_WHITE)
-        self._dp_tgl.grid(row=5, column=1, sticky="w", padx=(0, 12), pady=4)
-        self.lbl_entry(form_card, "Keterangan",      6, self._v_ket)
-        self.lbl_combo(form_card, "Status",          7, self._v_status, ["aktif", "lunas"])
+        self._dp_tgl.grid(row=7, column=1, sticky="w", padx=(0, 12), pady=4)
+        self.lbl_entry(form_card, "Keterangan",      8, self._v_ket)
+        self.lbl_combo(form_card, "Status",          9, self._v_status, ["aktif", "lunas"])
 
         # Preview angsuran detail
         prev = tk.Frame(form_card, bg="#EBF8FF", padx=10, pady=8)
-        prev.grid(row=8, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 0))
+        prev.grid(row=10, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 0))
 
         tk.Label(prev, text="📊 Estimasi Angsuran", font=("Arial", 8, "bold"),
                  bg="#EBF8FF", fg=C_DARK).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,4))
@@ -93,7 +147,7 @@ class PinjamanPage(BasePage):
         self._v_bunga.trace_add("write",  lambda *_: self._update_preview())
 
         btn_row = tk.Frame(form_card, bg=C_WHITE)
-        btn_row.grid(row=9, column=0, columnspan=2, pady=10, padx=12, sticky="ew")
+        btn_row.grid(row=11, column=0, columnspan=2, pady=10, padx=12, sticky="ew")
         self.btn(btn_row, "💾 Simpan",    self._save,   C_BLUE).pack(side="left", padx=(0, 4))
         self.btn(btn_row, "🗑 Hapus",     self._delete, C_RED).pack(side="left", padx=4)
         self.btn(btn_row, "✖ Bersihkan", self._clear,  "#718096", fg="white").pack(side="left", padx=4)
@@ -192,6 +246,24 @@ class PinjamanPage(BasePage):
 
     # ── Preview angsuran ──────────────────────────────────────────────────────
 
+    def _set_jangka(self, val):
+        """Set jangka dari tombol preset, update slider & preview."""
+        self._v_jangka.set(str(val))
+        try:
+            self._slider_jangka.set(min(val, 120))
+        except Exception:
+            pass
+        self._update_preview()
+
+    def _on_jangka_spin(self):
+        """Dipanggil saat spinbox naik/turun."""
+        try:
+            val = int(self._v_jangka.get())
+            self._slider_jangka.set(min(max(val, 1), 120))
+        except Exception:
+            pass
+        self._update_preview()
+
     def _update_preview(self):
         try:
             j  = float(self._jumlah_raw())
@@ -204,7 +276,23 @@ class PinjamanPage(BasePage):
             ang        = pokok_bln + bunga_bln
             total_bunga= bunga_bln * jk
             total_bayar= j + total_bunga
-            self._v_preview.set(fmt_rp(ang))
+
+            # Estimasi durasi dari tanggal pinjam (pure stdlib)
+            try:
+                from datetime import datetime
+                tgl_str   = self._dp_tgl.get()
+                tgl_mulai = datetime.strptime(tgl_str, "%Y-%m-%d").date()
+                m_selesai = tgl_mulai.month - 1 + jk
+                thn_sel   = tgl_mulai.year + m_selesai // 12
+                bln_sel   = m_selesai % 12 + 1
+                from datetime import date as _date
+                tgl_selesai = _date(thn_sel, bln_sel, 1)
+                durasi_txt  = (f"  ({tgl_mulai.strftime('%b %Y')} → "
+                               f"{tgl_selesai.strftime('%b %Y')})")
+            except Exception:
+                durasi_txt = ""
+
+            self._v_preview.set(f"{fmt_rp(ang)}{durasi_txt}")
             self._v_prev_pokok.set(fmt_rp(pokok_bln))
             self._v_prev_bunga.set(f"{fmt_rp(bunga_bln)}  ({b}%/bln)")
             self._v_prev_total_b.set(fmt_rp(total_bunga))

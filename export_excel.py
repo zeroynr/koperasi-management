@@ -1088,357 +1088,401 @@ def export_neraca(conn, filepath, periode_id=None, tahun=None):
     _sheet_neraca(wb, conn, periode_id, tahun)
     wb.save(filepath); return filepath
 
+
+
 # ═══════════════════════════════════════════════════════════════════════
-#  SHEET: KARTU PINJAMAN — satu sheet per anggota, per tahun
-#  Logika:
-#    - Satu sheet per anggota bernama "KP-NoAnggota"
-#    - Per anggota bisa punya banyak pinjaman (no urut 1, 2, 3…)
-#    - Bila pinjaman sudah lunas dan pinjam lagi → dilanjut no berikutnya
-#    - Angsuran tahun berjalan → hitam/biasa
-#    - Angsuran tahun sebelumnya (historis) → merah (sudah dibayar di periode lalu)
-#    - Filter tahun: hanya tampilkan baris angsuran tahun tsb (kartu per tahun)
+#  SHEET: KARTU ANGSURAN — format PERSIS seperti referensi gambar
+#
+#  Layout kolom:
+#    A=No  B=Tgl.pinjam  C=Jumlah pinjaman  D=Jumlah Angsuran(label)
+#    E=label(Pokok/jasa/Dibayar/ags/tgl)
+#    F..Q = Jan..Des   R=Jumlah Bunga   S=Saldo
+#
+#  Baris 1 di atas kolom bulan: merge "TAHUN – nama anggota"
+#
+#  Per pinjaman = 5 baris AKTIF + 2 baris HISTORIS MERAH (opsional):
+#    baris1 Pokok   : A=no(merge5) B=tgl(merge2) C=jumlah(merge5) D=(kosong) E=Pokok   | bulan=pokok/bln
+#    baris2 Jasa    :              B=Rp.jml total               D=(kosong) E=jasa    | bulan=bunga/bln
+#    baris3 Dibayar :                                           D=jangka(Nx)E=Dibayar| bulan=total dibayar
+#    baris4 Ags     : A=no(merge)  B=nama(merge2)               D=(kosong) E=ags     | bulan="jangka/ke"
+#    baris5 Tgl     :              B=nama                        D=(kosong) E=tgl     | bulan=tgl bayar
+#    -- jika ada historis tahun sebelumnya: --
+#    baris6 MERAH   :              B=tgl akhir historis (merah)
+#    baris7 MERAH   :              B=saldo historis    (merah)
+#
+#  "36/6" artinya: angsuran ke-36 terjadi di bulan Juni → jangka/bulan_ke
+#  Angsuran fleksibel: jangka diambil dari DB (bisa 6,12,24,36,dst)
 # ═══════════════════════════════════════════════════════════════════════
 def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
     from datetime import datetime as _dt
-    from collections import defaultdict
-    from calendar import monthrange
 
-    thn = tahun_filter or date.today().year
-    BULAN_LIST = list(range(1, 13))  # Jan–Des
+    thn  = tahun_filter or date.today().year
+    BULAN_NAMA_LIST = ["Januari","Feb","Maret","April","Mei","Juni",
+                       "Juli","Agustus","September","oktober","Nov","Desember"]
 
-    anggota_list = conn.execute(
-        "SELECT id, no_anggota, nama FROM anggota ORDER BY no_anggota"
-    ).fetchall()
+    # ── Kolom ────────────────────────────────────────────────────────────
+    C_NO  = 1   # A
+    C_TGL = 2   # B
+    C_JML = 3   # C
+    C_AGS = 4   # D  (label "Jumlah Angsuran" di header; isi: kosong/jangka)
+    C_LBL = 5   # E  (Pokok/jasa/Dibayar/ags/tgl)
+    C_M1  = 6   # F  Jan
+    C_M12 = 17  # Q  Des
+    C_BNGA= 18  # R
+    C_SLD = 19  # S
+    NCOLS = 19
 
-    # Warna kartu pinjaman
-    C_HEADER_KARTU = "1E3A5F"   # navy – judul kartu
-    C_HEADER_PIN   = "2B6CB0"   # blue – header per pinjaman
-    C_HIST_BG      = "FEF2F2"   # merah muda – historis
-    C_HIST_FG      = "991B1B"   # merah tua – teks historis
-    C_CURR_BG      = "FFFFFF"   # putih – tahun berjalan
-    C_CURR_ALT     = "EBF8FF"   # biru muda – alt row
-    C_TOTAL_BG     = "FED7AA"
-    C_TOTAL_FG     = "7B341E"
-    C_LUNAS_FG     = "276749"   # hijau
-    C_AKTIF_FG     = "C05621"   # oranye
+    # ── Warna ────────────────────────────────────────────────────────────
+    NAVY    = "1E3A5F"
+    BLUE    = "2B6CB0"
+    LBLUE   = "2C7DBE"
+    HDR_BG  = "D6E4F0"
+    ALT_BG  = "EBF4FB"
+    WHT     = "FFFFFF"
+    HIST_BG = "FFF0F0"
+    HIST_FG = "CC0000"
+    GRN     = "1A6B3A"
+    ORG     = "B54708"
 
-    # Kolom kartu: No | Tgl Pinjam | Jumlah Pinjam | Jangka | Bunga/bln | Jan…Des | Jml Bunga | Saldo
-    # Baris per pinjaman:
-    #   baris 1: no | tgl | jumlah | jangka | bunga  | angsuran pokok per bulan | total bunga | saldo
-    #   baris 2:    |     |        |        | jasa   | angsuran jasa per bulan   |             |
-    #   baris 3:    |     |        |        | dibayar| total dibayar per bulan   |             |
-    #   baris 4:    |     |        | ags ke | tgl    | tgl bayar per bulan       |             |
-    #   baris 5:    | (status+ket)|        |        | nama   |                   |             |
-    # ─── Jumlah col ───────────────────────────────────────────────────────────
-    # A=No, B=Tgl Pinjam, C=Jumlah, D=Jangka, E=Label, F..Q=Jan-Des, R=Jml Bunga, S=Saldo
-    COL_NO    = 1   # A
-    COL_TGL   = 2   # B
-    COL_JML   = 3   # C
-    COL_JANGKA= 4   # D
-    COL_LBL   = 5   # E
-    COL_JAN   = 6   # F
-    COL_DES   = 17  # Q
-    COL_BUNGA = 18  # R
-    COL_SALDO = 19  # S
-    NCOLS     = 19
+    def _s(style="thin", color="B0C4DE"):
+        return Side(style=style, color=color)
 
-    def _cell(ws, row, col, value="", bold=False, color="000000", bg=C_CURR_BG,
-              align="center", wrap=False, size=9, fmt=None, border=True):
-        c = ws.cell(row=row, column=col, value=value)
-        c.font      = Font(bold=bold, color=color, size=size, name="Arial")
+    def _brd(top="thin",bot="thin",lft="thin",rgt="thin",
+             tc="B0C4DE",bc="B0C4DE",lc="B0C4DE",rc="B0C4DE"):
+        return Border(top=_s(top,tc), bottom=_s(bot,bc),
+                      left=_s(lft,lc), right=_s(rgt,rc))
+
+    B_NORM = _brd()
+    B_BOT  = _brd(bot="medium", bc=NAVY)
+
+    def _wr(ws, row, col, val="", bold=False, fg="000000", bg=WHT,
+            ha="center", sz=9, fmt=None, wrap=False, brd=None):
+        c = ws.cell(row=row, column=col, value=val)
+        c.font      = Font(bold=bold, color=fg, size=sz, name="Arial")
         c.fill      = PatternFill("solid", fgColor=bg)
-        c.alignment = Alignment(horizontal=align, vertical="center", wrap_text=wrap)
-        if border:
-            c.border = _bord()
-        if fmt:
-            c.number_format = fmt
+        c.alignment = Alignment(horizontal=ha, vertical="center", wrap_text=wrap)
+        c.border    = brd if brd else B_NORM
+        if fmt: c.number_format = fmt
         return c
 
-    def _merge(ws, r1, c1, r2, c2, value="", bold=False, color="000000",
-               bg=C_CURR_BG, align="center", wrap=False, size=9):
-        ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
-        c = ws.cell(row=r1, column=c1, value=value)
-        c.font      = Font(bold=bold, color=color, size=size, name="Arial")
+    def _mg(ws, r1,c1,r2,c2, val="", bold=False, fg="000000", bg=WHT,
+            ha="center", sz=9, fmt=None, brd=None):
+        try:
+            ws.merge_cells(start_row=r1,start_column=c1,end_row=r2,end_column=c2)
+        except Exception:
+            pass
+        c = ws.cell(row=r1, column=c1, value=val)
+        c.font      = Font(bold=bold, color=fg, size=sz, name="Arial")
         c.fill      = PatternFill("solid", fgColor=bg)
-        c.alignment = Alignment(horizontal=align, vertical="center", wrap_text=wrap)
-        c.border    = _bord()
+        c.alignment = Alignment(horizontal=ha, vertical="center")
+        c.border    = brd if brd else B_NORM
+        if fmt: c.number_format = fmt
         return c
+
+    def _fmt_tgl(s, fmt="%d/%m/%Y"):
+        try:    return _dt.strptime(str(s), "%Y-%m-%d").strftime(fmt)
+        except: return str(s) if s else ""
+
+    def _rp(v):
+        try:    return f"Rp {int(v):,.0f}".replace(",",".")
+        except: return ""
+
+    # Ambil anggota yang punya pinjaman
+    anggota_list = conn.execute("""
+        SELECT DISTINCT a.id, a.no_anggota, a.nama
+        FROM anggota a JOIN pinjaman p ON p.anggota_id=a.id
+        ORDER BY a.no_anggota
+    """).fetchall()
 
     for ang in anggota_list:
-        aid      = ang["id"]
-        no_ang   = ang["no_anggota"]
-        nama_ang = ang["nama"]
+        aid, no_ang, nama_ang = ang["id"], ang["no_anggota"], ang["nama"]
 
-        # Ambil semua pinjaman anggota ini, urut tgl
         pinjaman_list = conn.execute("""
-            SELECT id, jumlah, jangka, bunga, tgl, status, keterangan
+            SELECT id,jumlah,jangka,bunga,tgl,status,keterangan
             FROM pinjaman WHERE anggota_id=?
             ORDER BY tgl ASC, id ASC
         """, (aid,)).fetchall()
+        if not pinjaman_list: continue
 
-        if not pinjaman_list:
-            continue  # lewati anggota tanpa pinjaman
-
-        # Buat sheet per anggota
-        sheet_name = f"KP-{no_ang}"[:31]  # Excel max 31 char
-        ws = wb.create_sheet(sheet_name)
+        # Nama sheet = nama anggota
+        sname = nama_ang[:31]
+        existing = [w.title for w in wb.worksheets]
+        sfx = 1
+        while sname in existing:
+            sname = f"{nama_ang[:28]}_{sfx}"; sfx += 1
+        ws = wb.create_sheet(sname)
         _no_grid(ws)
 
-        # ── Judul sheet ──────────────────────────────────────────────────
-        info_thn = f"Tahun: {thn}  |  Dicetak: {date.today().strftime('%d %B %Y')}"
+        # ════ Baris 1: Header nama koperasi ══════════════════════════════
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
-        c = ws.cell(row=1, column=1, value="KOPERASI LANGGENG")
-        c.font = Font(bold=True, color="FFFFFF", size=13, name="Arial")
-        c.fill = PatternFill("solid", fgColor=C_HEADER_KARTU)
+        c = ws.cell(row=1, column=1,
+                    value=f"KARTU ANGSURAN PINJAMAN – {nama_ang.upper()}")
+        c.font = Font(bold=True, color=WHT, size=12, name="Arial")
+        c.fill = PatternFill("solid", fgColor=NAVY)
         c.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[1].height = 22
 
+        # ════ Baris 2: Sub-header info ════════════════════════════════════
         ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=NCOLS)
-        c = ws.cell(row=2, column=1, value="KARTU PINJAMAN ANGGOTA")
-        c.font = Font(bold=True, color="FFFFFF", size=10, name="Arial")
-        c.fill = PatternFill("solid", fgColor=C_HEADER_PIN)
-        c.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[2].height = 18
-
-        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=NCOLS)
-        c = ws.cell(row=3, column=1,
-                    value=f"Anggota: {no_ang}  –  {nama_ang}  |  {info_thn}")
-        c.font = Font(bold=False, color=C_HEADER_KARTU, size=9, name="Arial")
-        c.fill = PatternFill("solid", fgColor="EBF8FF")
+        c = ws.cell(row=2, column=1,
+                    value=f"No. Anggota: {no_ang}  |  Tahun: {thn}  |  "
+                          f"Dicetak: {date.today().strftime('%d %B %Y')}")
+        c.font = Font(bold=False, color=NAVY, size=9, name="Arial")
+        c.fill = PatternFill("solid", fgColor=HDR_BG)
         c.alignment = Alignment(horizontal="left", vertical="center")
-        ws.row_dimensions[3].height = 16
+        ws.row_dimensions[2].height = 15
 
-        # ── Header kolom ────────────────────────────────────────────────
-        hdr_row = 4
-        hdrs = (
-            ["No", "Tgl Pinjam", "Jumlah\nPinjaman", "Jangka\n(bln)", "Keterangan"]
-            + [BULAN_SHORT[b] for b in BULAN_LIST]
-            + ["Jml Bunga\nDibayar", "Saldo\nAkhir"]
-        )
-        hdr_bg = ([C_HEADER_KARTU]*5
-                  + ["2B6CB0" if b%2==1 else "0D6EAE" for b in BULAN_LIST]
-                  + [C_HEADER_KARTU, C_HEADER_KARTU])
-        for ci, (h, bg) in enumerate(zip(hdrs, hdr_bg), 1):
-            _cell(ws, hdr_row, ci, h, bold=True, color="FFFFFF",
-                  bg=bg, align="center", wrap=True, size=9)
-        ws.row_dimensions[hdr_row].height = 30
+        # ════ Baris 3: Header kolom baris-1 (merge atas bulan) ════════════
+        # Col A-E kosong di baris 3; Col F-Q merge "TAHUN – nama user"
+        for ci in range(1, 6):
+            _wr(ws, 3, ci, "", bg=NAVY, brd=B_NORM)
+        _mg(ws, 3, C_M1, 3, C_M12,
+            val=f"{thn}  –  {nama_ang}",
+            bold=True, fg=WHT, bg=BLUE, ha="center", sz=10)
+        _wr(ws, 3, C_BNGA, "", bg=NAVY, brd=B_NORM)
+        _wr(ws, 3, C_SLD,  "", bg=NAVY, brd=B_NORM)
+        ws.row_dimensions[3].height = 18
 
-        # ── Data per pinjaman ────────────────────────────────────────────
-        cur_row = hdr_row + 1
-        ROWS_PER_PIN = 5  # Pokok / Jasa / Dibayar / Tgl / Status-Ket
+        # ════ Baris 4: Header kolom baris-2 ══════════════════════════════
+        HDR = 4
+        hdr_vals = ["No","Tgl.pinjam","Jumlah pinjaman","Jumlah Angsuran",""]
+        hdr_vals += BULAN_NAMA_LIST
+        hdr_vals += ["Jumlah Bunga","Saldo"]
+        hdr_bgs  = [NAVY]*5 + [BLUE if i%2==0 else LBLUE for i in range(12)] + [NAVY,NAVY]
+        for ci, (v, bg) in enumerate(zip(hdr_vals, hdr_bgs), 1):
+            c = ws.cell(row=HDR, column=ci, value=v)
+            c.font      = Font(bold=True, color=WHT, size=9, name="Arial")
+            c.fill      = PatternFill("solid", fgColor=bg)
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c.border    = B_NORM
+        ws.row_dimensions[HDR].height = 28
+
+        # ════ Baris data ══════════════════════════════════════════════════
+        cur = HDR + 1
 
         for no_urut, p in enumerate(pinjaman_list, 1):
-            pid      = p["id"]
-            jumlah   = p["jumlah"]
-            jangka   = p["jangka"]
-            bunga_pct= p["bunga"] or 1.5
-            tgl_pin  = p["tgl"]
-            status   = p["status"]
-            ket      = p["keterangan"] or ""
+            pid       = p["id"]
+            jumlah    = p["jumlah"]
+            jangka    = p["jangka"]   # fleksibel: 6,12,24,36,dst
+            bpct      = p["bunga"] or 1.5
+            tgl_pin   = p["tgl"]
+            status    = p["status"]
+            ket       = p["keterangan"] or ""
 
-            # Pokok per angsuran & bunga per angsuran
-            pokok_ang = round(jumlah / jangka) if jangka > 0 else jumlah
-            bunga_nom = round(jumlah * bunga_pct / 100)
-            total_ang = pokok_ang + bunga_nom
+            pokok_nom = round(jumlah / jangka) if jangka > 0 else 0
+            bunga_nom = round(jumlah * bpct / 100)
+            total_nom = pokok_nom + bunga_nom
 
-            # Ambil angsuran yang sudah dibayar (semua tahun)
-            angsur_rows = conn.execute("""
-                SELECT ke, bulan, tahun, jumlah, tgl
-                FROM angsuran WHERE pinjaman_id=?
-                ORDER BY ke ASC
+            # Ambil semua angsuran
+            angsur_all = conn.execute("""
+                SELECT ke,bulan,tahun,jumlah,tgl FROM angsuran
+                WHERE pinjaman_id=? ORDER BY ke ASC
             """, (pid,)).fetchall()
 
-            # Mapping bulan → angsuran (hanya tahun filter)
-            bulan_angsur_curr = {}   # bulan→{ke,jumlah,tgl} tahun ini
-            bulan_angsur_hist = {}   # bulan→{ke,jumlah,tgl} tahun lalu/sebelumnya
-            total_bunga_dibayar = 0
-            for ag in angsur_rows:
-                bln = ag["bulan"]
-                thn_ag = ag["tahun"]
-                if not bln:
-                    continue
-                data_ag = {
-                    "ke"    : ag["ke"],
-                    "jumlah": ag["jumlah"],
-                    "tgl"   : ag["tgl"] or "",
-                }
-                total_bunga_dibayar += bunga_nom  # bunga per angsuran
+            # Kelompok: curr=tahun ini, hist=tahun sebelumnya
+            # key=bulan, value=list angsuran (bisa >1 di bulan yg sama)
+            curr = {}   # bulan → {ke,jumlah,tgl}  (ambil pertama)
+            hist_list = []  # semua angsuran tahun < thn
+
+            total_bunga_bayar = 0
+            total_pokok_bayar = 0
+
+            for ag in angsur_all:
+                bln, thn_ag = ag["bulan"], ag["tahun"]
+                if not bln: continue
+                d = {"ke": ag["ke"], "jumlah": ag["jumlah"], "tgl": ag["tgl"] or ""}
+                total_bunga_bayar += bunga_nom
+                total_pokok_bayar += pokok_nom
                 if thn_ag == thn:
-                    bulan_angsur_curr[bln] = data_ag
-                elif thn_ag is not None and thn_ag < thn:
-                    bulan_angsur_hist[bln] = data_ag
+                    if bln not in curr:
+                        curr[bln] = d
+                elif thn_ag and thn_ag < thn:
+                    hist_list.append(ag)
 
-            total_bunga_dibayar = bunga_nom * len(angsur_rows)
+            saldo = max(0.0, jumlah - total_pokok_bayar)
+            if status == "lunas": saldo = 0.0
 
-            # Hitung saldo = jumlah - total pokok sudah dibayar
-            total_pokok_bayar = pokok_ang * len(angsur_rows)
-            saldo = max(0, jumlah - total_pokok_bayar)
+            # Hitung total bunga di tahun ini saja
+            bunga_thn_ini = bunga_nom * len(curr)
 
-            # Deteksi apakah ada historis tahun lalu di bulan ini
-            # Baris di sheet:
-            R_POKOK  = cur_row
-            R_JASA   = cur_row + 1
-            R_BAYAR  = cur_row + 2
-            R_KE     = cur_row + 3
-            R_TGL    = cur_row + 4
+            # Info historis: tgl akhir bayar & total dibayar di tahun sebelumnya
+            hist_tgl_akhir  = ""
+            hist_total_bayar= 0
+            if hist_list:
+                hist_sorted = sorted(hist_list, key=lambda x: (x["tahun"] or 0, x["ke"] or 0))
+                last_h      = hist_sorted[-1]
+                hist_tgl_akhir  = _fmt_tgl(last_h["tgl"], "%d %b %Y").upper()
+                hist_total_bayar= sum((h["jumlah"] or 0) for h in hist_sorted)
 
-            row_heights = [16, 14, 14, 14, 16]
-            for ri, rh in enumerate(row_heights):
-                ws.row_dimensions[cur_row + ri].height = rh
+            ada_hist = bool(hist_list)
+            NROWS = 5 + (2 if ada_hist else 0)
 
-            # Tentukan bg historis atau normal
-            ada_hist = bool(bulan_angsur_hist)
+            # Row indeks
+            R1 = cur        # Pokok
+            R2 = cur+1      # jasa
+            R3 = cur+2      # Dibayar
+            R4 = cur+3      # ags
+            R5 = cur+4      # tgl
+            R6 = cur+5      # historis baris1 (merah) — hanya jika ada hist
+            R7 = cur+6      # historis baris2 (merah) — hanya jika ada hist
 
-            def _bg_row(row_offset):
-                # Row historis merah, row normal putih/alt
-                return C_HIST_BG if ada_hist else (C_CURR_ALT if no_urut % 2 == 0 else C_CURR_BG)
+            for ri in range(cur, cur+NROWS):
+                ws.row_dimensions[ri].height = 15
+            if ada_hist:
+                ws.row_dimensions[R6].height = 14
+                ws.row_dimensions[R7].height = 14
 
-            def _fg_row(is_hist):
-                return C_HIST_FG if is_hist else "1A202C"
+            last_r = cur + NROWS - 1  # baris terakhir blok ini
 
-            # ── Kolom tetap: A–E ─────────────────────────────────────────
-            # A: No Urut (merge 5 baris)
-            _merge(ws, R_POKOK, COL_NO, R_TGL, COL_NO, no_urut,
-                   bold=True, color=C_HEADER_PIN, bg=_bg_row(0), size=11)
+            bg_norm = ALT_BG if no_urut % 2 == 0 else WHT
 
-            # B: Tgl Pinjam (merge 5 baris)
-            try:
-                tgl_disp = _dt.strptime(tgl_pin, "%Y-%m-%d").strftime("%d/%m/%Y")
-            except Exception:
-                tgl_disp = tgl_pin
-            _merge(ws, R_POKOK, COL_TGL, R_TGL, COL_TGL, tgl_disp,
-                   bold=False, bg=_bg_row(0), size=8)
+            # ── Kolom A: No (merge R1..R5) ────────────────────────────────
+            _mg(ws, R1, C_NO, R5, C_NO,
+                val=no_urut, bold=True, fg=BLUE, bg=bg_norm,
+                ha="center", sz=12,
+                brd=_brd(bot="hair",bc="B0C4DE") if ada_hist else B_BOT)
+            if ada_hist:
+                _mg(ws, R6, C_NO, R7, C_NO, val="", bg=HIST_BG, brd=B_BOT)
 
-            # C: Jumlah Pinjaman (merge 5 baris)
-            c = ws.cell(row=R_POKOK, column=COL_JML, value=jumlah)
-            c.font = Font(bold=True, color=C_HEADER_PIN, size=9, name="Arial")
-            c.fill = PatternFill("solid", fgColor=_bg_row(0))
-            c.alignment = Alignment(horizontal="right", vertical="center")
-            c.number_format = FMT_RP
-            c.border = _bord()
-            ws.merge_cells(start_row=R_POKOK, start_column=COL_JML,
-                           end_row=R_TGL,     end_column=COL_JML)
+            # ── Kolom B: Tgl pinjam (baris1-2 merge) + nama user ─────────
+            # B baris1-2: tgl pinjam
+            _mg(ws, R1, C_TGL, R2, C_TGL,
+                val=_fmt_tgl(tgl_pin, "%d %b %Y"), bold=False,
+                fg="374151", bg=bg_norm, ha="center", sz=9)
+            # B baris3: Rp. jumlah total bayar (jumlah + bunga)
+            total_semua = jumlah + (bunga_nom * jangka)
+            _wr(ws, R3, C_TGL,
+                f"Rp. {int(jumlah):,}".replace(",","."),
+                bold=False, fg="374151", bg=bg_norm, ha="left", sz=9)
+            # B baris4-5: nama user (merge)
+            _mg(ws, R4, C_TGL, R5, C_TGL,
+                val=nama_ang, bold=False,
+                fg="374151", bg=bg_norm, ha="center", sz=9)
+            # B baris6-7 historis (merah)
+            if ada_hist:
+                _wr(ws, R6, C_TGL, hist_tgl_akhir,
+                    bold=False, fg=HIST_FG, bg=HIST_BG, ha="center", sz=9)
+                _wr(ws, R7, C_TGL,
+                    f"Rp. {int(hist_total_bayar):,}".replace(",","."),
+                    bold=True, fg=HIST_FG, bg=HIST_BG, ha="left", sz=9,
+                    brd=B_BOT)
 
-            # D: Jangka (merge 5 baris)
-            _merge(ws, R_POKOK, COL_JANGKA, R_TGL, COL_JANGKA,
-                   f"{jangka}x", bold=False, bg=_bg_row(0), size=9)
+            # ── Kolom C: Jumlah pinjaman (merge R1..R5) ───────────────────
+            _mg(ws, R1, C_JML, R5, C_JML,
+                val=jumlah, bold=True, fg=NAVY, bg=bg_norm,
+                ha="right", sz=9, fmt=FMT_RP,
+                brd=_brd(bot="hair",bc="B0C4DE") if ada_hist else B_BOT)
+            if ada_hist:
+                _mg(ws, R6, C_JML, R7, C_JML, val="", bg=HIST_BG, brd=B_BOT)
 
-            # E: Label baris (Pokok / Jasa / Dibayar / Ags ke / Status-Ket)
-            lbl_rows = [
-                (R_POKOK, "Pokok",   False),
-                (R_JASA,  "Jasa",    False),
-                (R_BAYAR, "Dibayar", True),
-                (R_KE,    "Ags",     False),
-                (R_TGL,   ket or status.upper(), False),
+            # ── Kolom D: Jangka & label ───────────────────────────────────
+            # D baris3 saja: "36x" (jangka)
+            for ri in [R1, R2, R4, R5]:
+                _wr(ws, ri, C_AGS, "", bg=bg_norm)
+            _wr(ws, R3, C_AGS, f"{jangka}x",
+                bold=True, fg=NAVY, bg=bg_norm, ha="center", sz=10)
+            if ada_hist:
+                _wr(ws, R6, C_AGS, "", bg=HIST_BG)
+                _wr(ws, R7, C_AGS, "", bg=HIST_BG, brd=B_BOT)
+
+            # ── Kolom E: Label ────────────────────────────────────────────
+            lbl_rows_def = [
+                (R1, "Pokok",   False, "374151"),
+                (R2, "jasa",    False, "374151"),
+                (R3, "Dibayar", True,  "374151"),
+                (R4, "ags",     False, "374151"),
+                (R5, "tgl",     False,
+                     GRN if status=="lunas" else ORG),
             ]
-            status_fg = C_LUNAS_FG if status == "lunas" else C_AKTIF_FG
-            for row_e, lbl_e, is_bold in lbl_rows:
-                fg_e = status_fg if row_e == R_TGL else "374151"
-                _cell(ws, row_e, COL_LBL, lbl_e, bold=is_bold,
-                      color=fg_e, bg=_bg_row(0), align="center", size=8)
+            for ri, lv, lb, lf in lbl_rows_def:
+                brd = B_BOT if (ri == R5 and not ada_hist) else B_NORM
+                _wr(ws, ri, C_LBL, lv, bold=lb, fg=lf,
+                    bg=bg_norm, ha="center", sz=9, brd=brd)
+            if ada_hist:
+                _wr(ws, R6, C_LBL, "", bg=HIST_BG)
+                _wr(ws, R7, C_LBL, ket or status.upper(),
+                    bold=True, fg=HIST_FG, bg=HIST_BG,
+                    ha="center", sz=8, brd=B_BOT)
 
-            # ── Kolom bulan F–Q ──────────────────────────────────────────
-            total_jml_bunga = 0
-            for bi, bln in enumerate(BULAN_LIST):
-                col_b = COL_JAN + bi
+            # ── Kolom F..Q: bulan ─────────────────────────────────────────
+            for bi, bln in enumerate(range(1, 13)):
+                col_b = C_M1 + bi
 
-                if bln in bulan_angsur_curr:
-                    ag  = bulan_angsur_curr[bln]
-                    bg  = C_CURR_ALT if no_urut % 2 == 0 else C_CURR_BG
-                    fg  = "1A202C"
-                    b_nom = bunga_nom  # bunga nominal per angsuran
-                    # Pokok
-                    _cell(ws, R_POKOK, col_b, pokok_ang, color=fg, bg=bg, fmt=FMT_RP)
-                    ws.cell(R_POKOK, col_b).number_format = FMT_RP
-                    ws.cell(R_POKOK, col_b).alignment = Alignment(horizontal="right", vertical="center")
-                    # Jasa
-                    _cell(ws, R_JASA, col_b, b_nom, color=fg, bg=bg, fmt=FMT_RP)
-                    ws.cell(R_JASA, col_b).number_format = FMT_RP
-                    ws.cell(R_JASA, col_b).alignment = Alignment(horizontal="right", vertical="center")
-                    # Dibayar
-                    dibayar = ag["jumlah"]
-                    c_bayar = _cell(ws, R_BAYAR, col_b, dibayar, bold=True, color=fg, bg=bg)
-                    c_bayar.number_format = FMT_RP
-                    c_bayar.alignment = Alignment(horizontal="right", vertical="center")
-                    # Ke
-                    _cell(ws, R_KE, col_b, f"{ag['ke']}/{jangka}", bg=bg, align="center")
-                    # Tgl
-                    try:
-                        tgl_b = _dt.strptime(ag["tgl"], "%Y-%m-%d").strftime("%d/%m/%y")
-                    except Exception:
-                        tgl_b = ag["tgl"]
-                    _cell(ws, R_TGL, col_b, tgl_b, bg=bg, align="center", size=8)
-                    total_jml_bunga += b_nom
+                if bln in curr:
+                    ag  = curr[bln]
+                    cbg = ALT_BG if no_urut%2==0 else WHT
+                    cfg = "1A202C"
+                    brd5 = B_BOT if not ada_hist else B_NORM
 
-                elif bln in bulan_angsur_hist:
-                    # Historis tahun sebelumnya → warna merah
-                    ag  = bulan_angsur_hist[bln]
-                    bg  = C_HIST_BG
-                    fg  = C_HIST_FG
-                    b_nom = bunga_nom
-                    _cell(ws, R_POKOK, col_b, pokok_ang, bold=False, color=fg, bg=bg)
-                    ws.cell(R_POKOK, col_b).number_format = FMT_RP
-                    ws.cell(R_POKOK, col_b).alignment = Alignment(horizontal="right", vertical="center")
-                    _cell(ws, R_JASA, col_b, b_nom, bold=False, color=fg, bg=bg)
-                    ws.cell(R_JASA, col_b).number_format = FMT_RP
-                    ws.cell(R_JASA, col_b).alignment = Alignment(horizontal="right", vertical="center")
-                    dibayar = ag["jumlah"]
-                    c_bayar = _cell(ws, R_BAYAR, col_b, dibayar, bold=True, color=fg, bg=bg)
-                    c_bayar.number_format = FMT_RP
-                    c_bayar.alignment = Alignment(horizontal="right", vertical="center")
-                    _cell(ws, R_KE, col_b, f"{ag['ke']}/{jangka}", color=fg, bg=bg, align="center")
-                    try:
-                        tgl_b = _dt.strptime(ag["tgl"], "%Y-%m-%d").strftime("%d/%m/%y")
-                    except Exception:
-                        tgl_b = ag["tgl"]
-                    _cell(ws, R_TGL, col_b, tgl_b, color=fg, bg=bg, align="center", size=8)
+                    # baris1 Pokok
+                    c = _wr(ws, R1, col_b, _rp(pokok_nom),
+                            fg=cfg, bg=cbg, ha="right", sz=9)
+                    # baris2 jasa
+                    c = _wr(ws, R2, col_b, _rp(bunga_nom),
+                            fg=cfg, bg=cbg, ha="right", sz=9)
+                    # baris3 Dibayar
+                    c = _wr(ws, R3, col_b, _rp(total_nom),
+                            bold=True, fg=cfg, bg=cbg, ha="right", sz=9)
+                    # baris4 ags ke → "jangka/ke_bulan_ini"
+                    # "36/6" = jangka 36, angsuran ke-36 terjadi di bulan 6
+                    _wr(ws, R4, col_b, f"{jangka}/{ag['ke']}",
+                        fg=cfg, bg=cbg, ha="center", sz=9)
+                    # baris5 tgl
+                    _wr(ws, R5, col_b, _fmt_tgl(ag["tgl"], "%d-%b-%y"),
+                        fg=cfg, bg=cbg, ha="center", sz=8, brd=brd5)
+                    if ada_hist:
+                        _wr(ws, R6, col_b, "", bg=HIST_BG)
+                        _wr(ws, R7, col_b, "", bg=HIST_BG, brd=B_BOT)
                 else:
                     # Kosong
-                    bg = C_HIST_BG if ada_hist else (C_CURR_ALT if no_urut%2==0 else C_CURR_BG)
-                    for rr in [R_POKOK, R_JASA, R_BAYAR, R_KE, R_TGL]:
-                        _cell(ws, rr, col_b, "", bg=bg)
+                    brd5 = B_BOT if not ada_hist else B_NORM
+                    _wr(ws, R1, col_b, "", bg=bg_norm)
+                    _wr(ws, R2, col_b, "", bg=bg_norm)
+                    _wr(ws, R3, col_b, "", bg=bg_norm)
+                    _wr(ws, R4, col_b, "", bg=bg_norm)
+                    _wr(ws, R5, col_b, "", bg=bg_norm, brd=brd5)
+                    if ada_hist:
+                        _wr(ws, R6, col_b, "", bg=HIST_BG)
+                        _wr(ws, R7, col_b, "", bg=HIST_BG, brd=B_BOT)
 
-            # ── Kolom R: Jml Bunga Dibayar ──────────────────────────────
-            bg_r = _bg_row(0)
-            _merge(ws, R_POKOK, COL_BUNGA, R_TGL, COL_BUNGA,
-                   total_bunga_dibayar if total_bunga_dibayar > 0 else "",
-                   bold=True, color=C_HIST_FG if ada_hist else C_AKTIF_FG,
-                   bg=bg_r, align="right")
-            if total_bunga_dibayar > 0:
-                ws.cell(R_POKOK, COL_BUNGA).number_format = FMT_RP
+            # ── Kolom R: Jumlah Bunga (merge R1..R5) ──────────────────────
+            _mg(ws, R1, C_BNGA, R5, C_BNGA,
+                val=bunga_thn_ini if bunga_thn_ini else None,
+                bold=True, fg=ORG if bunga_thn_ini else "999999",
+                bg=bg_norm, ha="right", sz=9,
+                fmt=FMT_RP if bunga_thn_ini else None,
+                brd=_brd(bot="hair",bc="B0C4DE") if ada_hist else B_BOT)
+            if ada_hist:
+                _mg(ws, R6, C_BNGA, R7, C_BNGA, val="", bg=HIST_BG, brd=B_BOT)
 
-            # ── Kolom S: Saldo Akhir ─────────────────────────────────────
-            saldo_fg = C_LUNAS_FG if status == "lunas" else C_AKTIF_FG
-            saldo_val = 0 if status == "lunas" else saldo
-            _merge(ws, R_POKOK, COL_SALDO, R_TGL, COL_SALDO,
-                   saldo_val, bold=True, color=saldo_fg, bg=bg_r, align="right")
-            ws.cell(R_POKOK, COL_SALDO).number_format = FMT_RP
+            # ── Kolom S: Saldo (merge R1..R5) ─────────────────────────────
+            _mg(ws, R1, C_SLD, R5, C_SLD,
+                val=saldo, bold=True,
+                fg=GRN if status=="lunas" else ORG,
+                bg=bg_norm, ha="right", sz=9, fmt=FMT_RP,
+                brd=_brd(bot="hair",bc="B0C4DE") if ada_hist else B_BOT)
+            if ada_hist:
+                _mg(ws, R6, C_SLD, R7, C_SLD, val="", bg=HIST_BG, brd=B_BOT)
 
-            # ── Garis pemisah antar pinjaman ─────────────────────────────
-            for col_s in range(1, NCOLS+1):
-                ws.cell(R_TGL, col_s).border = Border(
-                    top=thin, bottom=Side(style="medium", color="1E3A5F"),
-                    left=thin, right=thin
-                )
+            cur += NROWS
 
-            cur_row += ROWS_PER_PIN
-
-        # ── Lebar kolom ─────────────────────────────────────────────────
-        ws.column_dimensions[_col(COL_NO)].width     = 4
-        ws.column_dimensions[_col(COL_TGL)].width    = 11
-        ws.column_dimensions[_col(COL_JML)].width    = 13
-        ws.column_dimensions[_col(COL_JANGKA)].width = 7
-        ws.column_dimensions[_col(COL_LBL)].width    = 9
+        # ── Lebar kolom ───────────────────────────────────────────────────
+        ws.column_dimensions[_col(C_NO) ].width = 4
+        ws.column_dimensions[_col(C_TGL)].width = 14
+        ws.column_dimensions[_col(C_JML)].width = 14
+        ws.column_dimensions[_col(C_AGS)].width = 9
+        ws.column_dimensions[_col(C_LBL)].width = 9
         for bi in range(12):
-            ws.column_dimensions[_col(COL_JAN + bi)].width = 10
-        ws.column_dimensions[_col(COL_BUNGA)].width = 13
-        ws.column_dimensions[_col(COL_SALDO)].width = 13
+            ws.column_dimensions[_col(C_M1+bi)].width = 11
+        ws.column_dimensions[_col(C_BNGA)].width = 13
+        ws.column_dimensions[_col(C_SLD) ].width = 13
 
 
 def export_kartu_pinjaman(conn, filepath, tahun=None):
-    """Export kartu pinjaman per anggota (semua anggota, satu sheet per anggota)."""
+    """Export kartu angsuran pinjaman per anggota (satu sheet per anggota)."""
     from helpers import this_year
     thn = tahun or this_year()
     wb = Workbook(); wb.remove(wb.active)
     _sheet_kartu_pinjaman(wb, conn, tahun_filter=thn)
-    wb.save(filepath); return filepath
+    wb.save(filepath)
+    return filepath

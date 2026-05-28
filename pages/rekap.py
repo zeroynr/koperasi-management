@@ -11,7 +11,8 @@ from helpers import fmt_rp, JENIS_LABEL, JENIS_LIST, BULAN_NAMA, this_year
 from export_excel import (export_rekap_lengkap, export_simpanan,
                           export_simpanan_perbulan,
                           export_pinjaman_angsuran,
-                          export_anggota, export_neraca)
+                          export_anggota, export_neraca,
+                          export_kartu_pinjaman)
 from pages.base_page import BasePage, C_BG, C_WHITE, C_BLUE, C_DARK, C_GRAY
 
 # ── Warna kartu export ────────────────────────────────────
@@ -19,6 +20,7 @@ CARD_COLORS = {
     "lengkap":      ("#1E3A5F", "#EBF8FF", "📊"),
     "simpanan":     ("#276749", "#F0FFF4", "💰"),
     "pin_angsuran": ("#C05621", "#FFFAF0", "📋"),
+    "kartu_pin":    ("#2B6CB0", "#EBF8FF", "🪪"),
     "anggota":      ("#553C9A", "#F3E8FF", "👥"),
     "neraca":       ("#1A365D", "#E0F2FE", "🏦"),
 }
@@ -116,6 +118,7 @@ class RekapPage(BasePage):
             ("lengkap",      "Rekap Lengkap",        "Semua data\n(Anggota, Simpanan,\nPinjaman, Angsuran, Neraca)", self._exp_lengkap),
             ("simpanan",     "Simpanan",              "Matriks per-bulan\n+ Detail list\n(sesuai filter jenis)", self._exp_simpanan),
             ("pin_angsuran", "Pinjaman &\nAngsuran", "4 sheet:\nDaftar Pinjaman\nRiwayat Angsuran\nMatriks Per Bulan\nRekap Per Tahun", self._exp_pin_angsuran),
+            ("kartu_pin",    "Kartu Pinjaman",        "Sheet per anggota\nRiwayat angsuran\nper bulan (Jan-Des)\nHistoris merah", self._exp_kartu_pin),
             ("anggota",      "Data Anggota",          "Daftar lengkap\nanggota koperasi", self._exp_anggota),
             ("neraca",       "Neraca",                "Ringkasan\nkeuangan\n& aset", self._exp_neraca),
         ]
@@ -466,6 +469,13 @@ class RekapPage(BasePage):
 
     def _exp_anggota(self):
         self._do_export(export_anggota, "Data_Anggota.xlsx")
+
+    def _exp_kartu_pin(self):
+        from helpers import this_year
+        _, tahun, _ = self._get_filter()
+        thn = tahun if tahun else this_year()
+        fname = f"Kartu_Pinjaman_{thn}.xlsx"
+        self._do_export(export_kartu_pinjaman, fname, tahun=thn)
 
     def _exp_neraca(self):
         pid, tahun, _ = self._get_filter()
