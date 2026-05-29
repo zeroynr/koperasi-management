@@ -223,7 +223,7 @@ class AngsuranPage(BasePage):
             conn.close()
         self._pinjaman_map = {}
         for r in rows:
-            key = f"{r['no_anggota']} – {r['nama']} ({fmt_rp(r['jumlah'])}, {r['jangka']} bln)"
+            key = f"{r['no_anggota']} – {r['nama']} ({fmt_rp(r['jumlah'])}, {r['jangka']}x)"
             self._pinjaman_map[key] = dict(r)
         names = list(self._pinjaman_map.keys())
         self._cb_pin["values"] = names
@@ -238,24 +238,43 @@ class AngsuranPage(BasePage):
             self._v_info_sisa.set("")
             self._v_info_total.set("")
             return
-        ang = hitung_angsuran(pin["jumlah"], pin["jangka"], pin["bunga"])
-        self._v_info_angsuran.set(fmt_rp(ang))
+        pokok_nom = round(pin["jumlah"] / pin["jangka"]) if pin["jangka"] > 0 else 0
+        bunga_nom = round(pin["jumlah"] * (pin["bunga"] or 1.5) / 100)
+        ang       = pokok_nom + bunga_nom
+        total_wajib = ang * pin["jangka"]   # total yg harus dibayar selama jangka
+
         conn = get_conn()
         try:
-            bayar = conn.execute(
-                "SELECT COUNT(*) FROM angsuran WHERE pinjaman_id=?", (pin["id"],)
+            # Jumlah kali angsuran sudah dibayar (setiap record = 1 kali bayar)
+            bayar_kali = conn.execute(
+                "SELECT COUNT(*) FROM angsuran WHERE pinjaman_id=? AND status='lunas'",
+                (pin["id"],)
             ).fetchone()[0]
+            # Total rupiah sudah dibayar
             total_bayar = conn.execute(
-                "SELECT COALESCE(SUM(jumlah),0) FROM angsuran WHERE pinjaman_id=?", (pin["id"],)
+                "SELECT COALESCE(SUM(jumlah),0) FROM angsuran WHERE pinjaman_id=?",
+                (pin["id"],)
             ).fetchone()[0]
         finally:
             conn.close()
-        sisa_kali  = pin["jangka"] - bayar
-        total_jml  = ang * pin["jangka"]
-        sisa_rupiah = max(0, total_jml - total_bayar)
-        self._v_info_sisa.set(f"{bayar} dari {pin['jangka']} kali  ({sisa_kali} sisa)")
-        self._v_info_total.set(fmt_rp(sisa_rupiah))
-        self._v_ke.set(str(bayar + 1))
+
+        sisa_kali   = max(0, pin["jangka"] - bayar_kali)
+        sisa_rupiah = max(0, total_wajib - total_bayar)
+
+        self._v_info_angsuran.set(
+            f"{fmt_rp(ang)}  (pokok {fmt_rp(pokok_nom)} + bunga {fmt_rp(bunga_nom)})"
+        )
+        self._v_info_sisa.set(
+            f"Sudah {bayar_kali}/{pin['jangka']} kali  –  sisa {sisa_kali} kali"
+        )
+        self._v_info_total.set(
+            f"{fmt_rp(sisa_rupiah)}  (dari total {fmt_rp(total_wajib)})"
+        )
+        # Auto-isi ke- berikutnya dan jumlah
+        next_ke = bayar_kali + 1
+        if next_ke > pin["jangka"]:
+            next_ke = pin["jangka"]
+        self._v_ke.set(str(next_ke))
         self._jumlah_updating = True
         self._v_jumlah.set(_fmt_angka(str(int(ang))))
         self._jumlah_updating = False
@@ -436,14 +455,32 @@ class AngsuranPage(BasePage):
             messagebox.showerror("Error", "Pinjaman tidak ditemukan!")
             return
 
+        # Validasi ke- tidak boleh melebihi jangka
+        if ke > pin["jangka"]:
+            messagebox.showwarning("Perhatian",
+                f"Angsuran ke-{ke} melebihi jangka pinjaman ({pin['jangka']} kali)!\n"
+                "Gunakan tombol 'Lunas Sekaligus' bila ingin melunasi semua sisa.")
+            return
+
         conn = get_conn()
         try:
             if self._sel_id:
+                # Update: boleh ubah jumlah & tgl, ke- tidak berubah
                 conn.execute(
                     "UPDATE angsuran SET ke=?,jumlah=?,tgl=? WHERE id=?",
                     (ke, jumlah, tgl, self._sel_id))
                 messagebox.showinfo("Berhasil", "Angsuran diperbarui.")
             else:
+                # Cek apakah ke- ini sudah pernah dicatat
+                ada = conn.execute(
+                    "SELECT id FROM angsuran WHERE pinjaman_id=? AND ke=? AND status='lunas'",
+                    (pin["id"], ke)
+                ).fetchone()
+                if ada:
+                    messagebox.showwarning("Duplikat",
+                        f"Angsuran ke-{ke} sudah pernah dicatat!\n"
+                        "Pilih nomor angsuran yang belum dibayar.")
+                    return
                 from datetime import datetime as _dt
                 try:
                     _d = _dt.strptime(tgl, "%Y-%m-%d")
@@ -454,12 +491,21 @@ class AngsuranPage(BasePage):
                     "INSERT INTO angsuran (pinjaman_id,ke,jumlah,tgl,bulan,tahun,status)"
                     " VALUES (?,?,?,?,?,?,?)",
                     (pin["id"], ke, jumlah, tgl, _bulan, _tahun, "lunas"))
-                bayar = conn.execute(
-                    "SELECT COUNT(*) FROM angsuran WHERE pinjaman_id=?", (pin["id"],)
+                # Cek apakah sudah bayar semua kali
+                bayar_kali = conn.execute(
+                    "SELECT COUNT(*) FROM angsuran WHERE pinjaman_id=? AND status='lunas'",
+                    (pin["id"],)
                 ).fetchone()[0]
-                if bayar >= pin["jangka"]:
+                if bayar_kali >= pin["jangka"]:
                     conn.execute("UPDATE pinjaman SET status='lunas' WHERE id=?", (pin["id"],))
-                messagebox.showinfo("Berhasil", "Angsuran berhasil dicatat.")
+                    messagebox.showinfo("Berhasil",
+                        f"Angsuran ke-{ke} berhasil dicatat.\n\n"
+                        f"🎉 Pinjaman ini sudah LUNAS! ({pin['jangka']} dari {pin['jangka']} kali)")
+                else:
+                    sisa = pin["jangka"] - bayar_kali
+                    messagebox.showinfo("Berhasil",
+                        f"Angsuran ke-{ke} berhasil dicatat.\n"
+                        f"Sisa: {sisa} kali lagi.")
             conn.commit()
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -499,10 +545,12 @@ class AngsuranPage(BasePage):
         finally:
             conn.close()
 
-        ang        = hitung_angsuran(pin["jumlah"], pin["jangka"], pin["bunga"])
+        pokok_nom  = round(pin["jumlah"] / pin["jangka"]) if pin["jangka"] > 0 else 0
+        bunga_nom  = round(pin["jumlah"] * (pin["bunga"] or 1.5) / 100)
+        ang        = pokok_nom + bunga_nom
         total_jml  = ang * pin["jangka"]
         sisa_rupiah = max(0, total_jml - total_bayar)
-        sisa_kali   = pin["jangka"] - bayar
+        sisa_kali   = max(0, pin["jangka"] - bayar)
 
         if sisa_kali <= 0:
             messagebox.showinfo("Info", "Pinjaman ini sudah lunas semua!")

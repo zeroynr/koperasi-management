@@ -1315,7 +1315,7 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
                 hist_total_bayar= sum((h["jumlah"] or 0) for h in hist_sorted)
 
             ada_hist = bool(hist_list)
-            NROWS = 5 + (2 if ada_hist else 0)
+            NROWS = 5 + (3 if ada_hist else 0)
 
             # Row indeks
             R1 = cur        # Pokok
@@ -1323,14 +1323,16 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
             R3 = cur+2      # Dibayar
             R4 = cur+3      # ags
             R5 = cur+4      # tgl
-            R6 = cur+5      # historis baris1 (merah) — hanya jika ada hist
-            R7 = cur+6      # historis baris2 (merah) — hanya jika ada hist
+            R6 = cur+5      # hist baris1: nama user merah
+            R7 = cur+6      # hist baris2: tgl akhir bayar tahun lalu
+            R8 = cur+7      # hist baris3: total rupiah terbayar tahun lalu
 
             for ri in range(cur, cur+NROWS):
                 ws.row_dimensions[ri].height = 15
             if ada_hist:
                 ws.row_dimensions[R6].height = 14
                 ws.row_dimensions[R7].height = 14
+                ws.row_dimensions[R8].height = 14
 
             last_r = cur + NROWS - 1  # baris terakhir blok ini
 
@@ -1342,38 +1344,65 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
                 ha="center", sz=12,
                 brd=_brd(bot="hair",bc="B0C4DE") if ada_hist else B_BOT)
             if ada_hist:
-                _mg(ws, R6, C_NO, R7, C_NO, val="", bg=HIST_BG, brd=B_BOT)
+                _mg(ws, R6, C_NO, R8, C_NO, val="", bg=HIST_BG, brd=B_BOT)
 
-            # ── Kolom B: Tgl pinjam (baris1-2 merge) + nama user ─────────
-            # B baris1-2: tgl pinjam
-            _mg(ws, R1, C_TGL, R2, C_TGL,
-                val=_fmt_tgl(tgl_pin, "%d %b %Y"), bold=False,
+            # ── Kolom B ───────────────────────────────────────────────────
+            # B1: tgl pinjam
+            _wr(ws, R1, C_TGL, _fmt_tgl(tgl_pin, "%d %b %Y"),
+                bold=False, fg="374151", bg=bg_norm, ha="center", sz=9)
+            # B2: kosong
+            _wr(ws, R2, C_TGL, "", bg=bg_norm)
+            # B3: kosong
+            _wr(ws, R3, C_TGL, "", bg=bg_norm)
+            # B4: nama user
+            _wr(ws, R4, C_TGL, nama_ang, bold=False,
                 fg="374151", bg=bg_norm, ha="center", sz=9)
-            # B baris3: Rp. jumlah total bayar (jumlah + bunga)
-            total_semua = jumlah + (bunga_nom * jangka)
-            _wr(ws, R3, C_TGL,
-                f"Rp. {int(jumlah):,}".replace(",","."),
-                bold=False, fg="374151", bg=bg_norm, ha="left", sz=9)
-            # B baris4-5: nama user (merge)
-            _mg(ws, R4, C_TGL, R5, C_TGL,
-                val=nama_ang, bold=False,
-                fg="374151", bg=bg_norm, ha="center", sz=9)
-            # B baris6-7 historis (merah)
+            # B5: nama user (warna status: lunas=hijau, aktif=oranye)
+            _wr(ws, R5, C_TGL, nama_ang, bold=False,
+                fg=GRN if status == "lunas" else ORG,
+                bg=bg_norm, ha="center", sz=9,
+                brd=B_NORM if ada_hist else B_BOT)
+            # B6-7 historis MERAH — rekapan pembayaran tahun sebelumnya:
+            # B6: nama user (merah)
+            # B7: tgl akhir pembayaran tahun lalu  mis: "31 DES 2025"
+            # B8: total rupiah terbayar tahun lalu  mis: "6.000.000"
             if ada_hist:
-                _wr(ws, R6, C_TGL, hist_tgl_akhir,
+                _wr(ws, R6, C_TGL, nama_ang,
                     bold=False, fg=HIST_FG, bg=HIST_BG, ha="center", sz=9)
-                _wr(ws, R7, C_TGL,
-                    f"Rp. {int(hist_total_bayar):,}".replace(",","."),
+                _wr(ws, R7, C_TGL, hist_tgl_akhir,
+                    bold=False, fg=HIST_FG, bg=HIST_BG, ha="left", sz=9)
+                _wr(ws, R8, C_TGL,
+                    f"{int(hist_total_bayar):,}".replace(",", "."),
                     bold=True, fg=HIST_FG, bg=HIST_BG, ha="left", sz=9,
                     brd=B_BOT)
 
-            # ── Kolom C: Jumlah pinjaman (merge R1..R5) ───────────────────
-            _mg(ws, R1, C_JML, R5, C_JML,
-                val=jumlah, bold=True, fg=NAVY, bg=bg_norm,
-                ha="right", sz=9, fmt=FMT_RP,
-                brd=_brd(bot="hair",bc="B0C4DE") if ada_hist else B_BOT)
+            # ── Kolom C: Rincian per baris ────────────────────────────────
+            # C1: Jumlah pinjaman
+            # C2: Pokok / bln
+            # C3: Bunga / bln
+            # C4: Total dibayar / bln (pokok + bunga)
+            # C5: kosong
+            # C6-8 historis MERAH:
+            #   C6: total rekapan terbayar tahun lalu (Rp 264.500)
+            #   C7: kosong
+            #   C8: kosong
+            hist_total_bln = (pokok_nom + bunga_nom) * len(hist_list) if ada_hist else 0
+
+            _wr(ws, R1, C_JML, jumlah, bold=True, fg=NAVY,
+                bg=bg_norm, ha="right", sz=9, fmt=FMT_RP)
+            _wr(ws, R2, C_JML, pokok_nom, bold=False, fg="374151",
+                bg=bg_norm, ha="right", sz=9, fmt=FMT_RP)
+            _wr(ws, R3, C_JML, bunga_nom, bold=False, fg="374151",
+                bg=bg_norm, ha="right", sz=9, fmt=FMT_RP)
+            _wr(ws, R4, C_JML, pokok_nom + bunga_nom, bold=True, fg=ORG,
+                bg=bg_norm, ha="right", sz=9, fmt=FMT_RP)
+            _wr(ws, R5, C_JML, "", bg=bg_norm,
+                brd=B_NORM if ada_hist else B_BOT)
             if ada_hist:
-                _mg(ws, R6, C_JML, R7, C_JML, val="", bg=HIST_BG, brd=B_BOT)
+                _wr(ws, R6, C_JML, hist_total_bayar, bold=True, fg=HIST_FG,
+                    bg=HIST_BG, ha="right", sz=9, fmt=FMT_RP)
+                _wr(ws, R7, C_JML, "", bg=HIST_BG)
+                _wr(ws, R8, C_JML, "", bg=HIST_BG, brd=B_BOT)
 
             # ── Kolom D: Jangka & label ───────────────────────────────────
             # D baris3 saja: "36x" (jangka)
@@ -1383,7 +1412,8 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
                 bold=True, fg=NAVY, bg=bg_norm, ha="center", sz=10)
             if ada_hist:
                 _wr(ws, R6, C_AGS, "", bg=HIST_BG)
-                _wr(ws, R7, C_AGS, "", bg=HIST_BG, brd=B_BOT)
+                _wr(ws, R7, C_AGS, "", bg=HIST_BG)
+                _wr(ws, R8, C_AGS, "", bg=HIST_BG, brd=B_BOT)
 
             # ── Kolom E: Label ────────────────────────────────────────────
             lbl_rows_def = [
@@ -1400,7 +1430,8 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
                     bg=bg_norm, ha="center", sz=9, brd=brd)
             if ada_hist:
                 _wr(ws, R6, C_LBL, "", bg=HIST_BG)
-                _wr(ws, R7, C_LBL, ket or status.upper(),
+                _wr(ws, R7, C_LBL, "", bg=HIST_BG)
+                _wr(ws, R8, C_LBL, ket or status.upper(),
                     bold=True, fg=HIST_FG, bg=HIST_BG,
                     ha="center", sz=8, brd=B_BOT)
 
@@ -1432,7 +1463,8 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
                         fg=cfg, bg=cbg, ha="center", sz=8, brd=brd5)
                     if ada_hist:
                         _wr(ws, R6, col_b, "", bg=HIST_BG)
-                        _wr(ws, R7, col_b, "", bg=HIST_BG, brd=B_BOT)
+                        _wr(ws, R7, col_b, "", bg=HIST_BG)
+                        _wr(ws, R8, col_b, "", bg=HIST_BG, brd=B_BOT)
                 else:
                     # Kosong
                     brd5 = B_BOT if not ada_hist else B_NORM
@@ -1443,7 +1475,8 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
                     _wr(ws, R5, col_b, "", bg=bg_norm, brd=brd5)
                     if ada_hist:
                         _wr(ws, R6, col_b, "", bg=HIST_BG)
-                        _wr(ws, R7, col_b, "", bg=HIST_BG, brd=B_BOT)
+                        _wr(ws, R7, col_b, "", bg=HIST_BG)
+                        _wr(ws, R8, col_b, "", bg=HIST_BG, brd=B_BOT)
 
             # ── Kolom R: Jumlah Bunga (merge R1..R5) ──────────────────────
             _mg(ws, R1, C_BNGA, R5, C_BNGA,
@@ -1453,7 +1486,7 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
                 fmt=FMT_RP if bunga_thn_ini else None,
                 brd=_brd(bot="hair",bc="B0C4DE") if ada_hist else B_BOT)
             if ada_hist:
-                _mg(ws, R6, C_BNGA, R7, C_BNGA, val="", bg=HIST_BG, brd=B_BOT)
+                _mg(ws, R6, C_BNGA, R8, C_BNGA, val="", bg=HIST_BG, brd=B_BOT)
 
             # ── Kolom S: Saldo (merge R1..R5) ─────────────────────────────
             _mg(ws, R1, C_SLD, R5, C_SLD,
@@ -1462,7 +1495,7 @@ def _sheet_kartu_pinjaman(wb, conn, tahun_filter=None):
                 bg=bg_norm, ha="right", sz=9, fmt=FMT_RP,
                 brd=_brd(bot="hair",bc="B0C4DE") if ada_hist else B_BOT)
             if ada_hist:
-                _mg(ws, R6, C_SLD, R7, C_SLD, val="", bg=HIST_BG, brd=B_BOT)
+                _mg(ws, R6, C_SLD, R8, C_SLD, val="", bg=HIST_BG, brd=B_BOT)
 
             cur += NROWS
 
