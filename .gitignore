@@ -32,3 +32,8 @@ desktop.ini
 .vscode/
 .idea/
 *.sublime-project
+
+dist/
+build/
+.agents/
+dokumen/
