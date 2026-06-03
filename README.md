@@ -19,17 +19,20 @@ Aplikasi desktop manajemen koperasi berbasis Python + Tkinter. Dirancang untuk m
 ## ✨ Fitur Utama
 
 ### 📊 Dashboard
+
 - Ringkasan statistik total anggota, simpanan, pinjaman, dan angsuran
 - Tampilan cepat transaksi simpanan dan pinjaman terbaru
 - Data diperbarui otomatis setiap kali membuka halaman
 
 ### 👥 Manajemen Anggota
+
 - Tambah, edit, dan hapus data anggota
 - Data anggota meliputi: No. Anggota, Nama, Alamat, No. HP, Tanggal Masuk
 - Fitur pencarian/filter anggota secara real-time
 - Validasi nomor anggota agar tidak duplikat
 
 ### 🗂️ Manajemen Periode
+
 - Buat dan kelola periode simpanan (contoh: Periode 2024, Periode 2025)
 - Setiap periode memiliki: nama, tahun, bulan mulai–akhir, status (aktif/tutup)
 - Tutup dan buka kembali periode dengan konfirmasi
@@ -38,6 +41,7 @@ Aplikasi desktop manajemen koperasi berbasis Python + Tkinter. Dirancang untuk m
 - Filter tampilan: Semua / Aktif / Tutup
 
 ### 💰 Simpanan
+
 Mendukung **5 jenis simpanan** dalam satu halaman:
 | Jenis | Keterangan |
 |---|---|
@@ -54,6 +58,7 @@ Mendukung **5 jenis simpanan** dalam satu halaman:
 - Tidak dapat menambah simpanan jika tidak ada periode aktif
 
 ### 🏦 Pinjaman
+
 - Catat pengajuan pinjaman anggota (nominal, bunga, tenor, tanggal)
 - Preview otomatis: cicilan per bulan dihitung langsung saat input
 - Status pinjaman: aktif / lunas
@@ -61,6 +66,7 @@ Mendukung **5 jenis simpanan** dalam satu halaman:
 - Hapus pinjaman beserta seluruh angsuran terkait
 
 ### 📅 Angsuran
+
 - Catat pembayaran angsuran per pinjaman
 - Informasi detail pinjaman: sisa hutang, total sudah bayar, cicilan/bulan
 - 3 tab tampilan:
@@ -70,22 +76,25 @@ Mendukung **5 jenis simpanan** dalam satu halaman:
 - Validasi agar tidak melebihi sisa hutang
 
 ### 📤 Rekap & Export Excel
+
 Filter export: periode, jenis simpanan, bulan, tahun
 
-| Export | Sheet yang Dihasilkan |
-|---|---|
-| **Rekap Lengkap** | Anggota, Simpanan (semua jenis), Pinjaman, Angsuran, Neraca |
-| **Simpanan** | Rekap Simpanan, Detail matriks per bulan/tanggal, Matriks Jan–Des, Rekap per Periode |
-| **Pinjaman & Angsuran** | Daftar Pinjaman, Riwayat Angsuran, Matriks per Bulan, Rekap per Tahun |
-| **Data Anggota** | Daftar lengkap anggota koperasi |
-| **Neraca** | Ringkasan keuangan & aset |
+| Export                  | Sheet yang Dihasilkan                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| **Rekap Lengkap**       | Anggota, Simpanan (semua jenis), Pinjaman, Angsuran, Neraca                          |
+| **Simpanan**            | Rekap Simpanan, Detail matriks per bulan/tanggal, Matriks Jan–Des, Rekap per Periode |
+| **Pinjaman & Angsuran** | Daftar Pinjaman, Riwayat Angsuran, Matriks per Bulan, Rekap per Tahun                |
+| **Data Anggota**        | Daftar lengkap anggota koperasi                                                      |
+| **Neraca**              | Ringkasan keuangan & aset                                                            |
 
 **Format sheet Detail Simpanan** mengikuti format matriks:
+
 - Baris header: nama bulan (Januari, Februari, dst)
 - Sub-header: tanggal pembayaran aktual
 - Hanya tanggal yang ada transaksinya yang dimunculkan
 
 **Sheet Rekap Tahunan Simpanan** menampilkan:
+
 - Kolom per jenis simpanan (Pokok, Wajib, Sukarela, Hari Raya, Khusus)
 - Sub-kolom per periode dengan nama asli + rentang tanggal (01 Jan 2024 – 31 Des 2024)
 - Total per anggota dan grand total keseluruhan
@@ -94,12 +103,12 @@ Filter export: periode, jenis simpanan, bulan, tahun
 
 ## 🛠️ Teknologi
 
-| Komponen | Library |
-|---|---|
-| GUI / Tampilan | `tkinter` + `ttk` (built-in Python) |
-| Database | `SQLite3` (built-in Python, tanpa server) |
-| Export Excel | `openpyxl` |
-| Ikon / Gambar | `Pillow` (PIL) |
+| Komponen       | Library                                   |
+| -------------- | ----------------------------------------- |
+| GUI / Tampilan | `tkinter` + `ttk` (built-in Python)       |
+| Database       | `SQLite3` (built-in Python, tanpa server) |
+| Export Excel   | `openpyxl`                                |
+| Ikon / Gambar  | `Pillow` (PIL)                            |
 
 ---
 
@@ -115,12 +124,14 @@ Filter export: periode, jenis simpanan, bulan, tahun
 ## ⚙️ Instalasi
 
 **1. Clone repositori**
+
 ```bash
 git clone https://github.com/zeroynr/koperasi-management.git
 cd koperasi-management
 ```
 
 **2. (Opsional) Buat virtual environment**
+
 ```bash
 python -m venv venv
 
@@ -132,8 +143,15 @@ source venv/bin/activate
 ```
 
 **3. Install dependensi**
+
 ```bash
-pip install openpyxl Pillow
+pip install -r requirements.txt
+```
+
+**4. Build Aplikasi**
+
+```bash
+pyinstaller koperasi.spec
 ```
 
 > `tkinter` dan `sqlite3` sudah termasuk dalam instalasi Python standar dan tidak perlu diinstall terpisah.
