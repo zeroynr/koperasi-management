@@ -131,7 +131,7 @@ class SimpananPage(BasePage):
     def _load_anggota(self):
         conn = get_conn()
         try:
-            rows = conn.execute("SELECT id,no_anggota,nama FROM anggota ORDER BY nama").fetchall()
+            rows = conn.execute("SELECT id,no_anggota,nama FROM anggota ORDER BY CAST(SUBSTR(no_anggota,5) AS INTEGER)").fetchall()
         finally:
             conn.close()
         self._anggota_map = {f"{r['no_anggota']} – {r['nama']}": r['id'] for r in rows}

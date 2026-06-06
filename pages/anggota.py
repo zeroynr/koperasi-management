@@ -17,6 +17,26 @@ class AnggotaPage(BasePage):
         self._build()
         self.refresh()
 
+    # ── helper: generate no anggota berikutnya ────────────────────────
+    def _next_no_anggota(self):
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                """SELECT no_anggota FROM anggota
+                   ORDER BY CAST(SUBSTR(no_anggota, 5) AS INTEGER) DESC
+                   LIMIT 1"""
+            ).fetchone()
+        finally:
+            conn.close()
+        if row:
+            try:
+                num = int(row[0].split("-")[1]) + 1
+            except Exception:
+                num = 1
+        else:
+            num = 1
+        return f"KOP-{num:03d}"
+
     def _build(self):
         # ── Top: form + tabel ─────────────────────────────
         top = tk.Frame(self, bg=C_BG)
@@ -41,19 +61,20 @@ class AnggotaPage(BasePage):
         self.lbl_entry(form_card, "Nama Lengkap *", 2, self._v_nama)
         self.lbl_entry(form_card, "Alamat",         3, self._v_almt)
         self.lbl_entry(form_card, "No. HP",         4, self._v_hp)
+
         # Tanggal masuk dengan kalender
-        tk.Label(form_card, text="Tgl Masuk *", font=("Arial",9),
+        tk.Label(form_card, text="Tgl Masuk *", font=("Arial", 9),
                  bg=C_WHITE, fg=C_DARK, width=16, anchor="w").grid(
-            row=5, column=0, sticky="w", padx=(12,4), pady=4)
+            row=5, column=0, sticky="w", padx=(12, 4), pady=4)
         self._dp_tgl = DatePickerWidget(form_card, label="", bg=C_WHITE)
-        self._dp_tgl.grid(row=5, column=1, sticky="w", padx=(0,12), pady=4)
+        self._dp_tgl.grid(row=5, column=1, sticky="w", padx=(0, 12), pady=4)
 
         btn_row = tk.Frame(form_card, bg=C_WHITE)
         btn_row.grid(row=6, column=0, columnspan=2, pady=10, padx=12, sticky="ew")
 
-        self.btn(btn_row, "💾 Simpan",  self._save,   C_BLUE).pack(side="left", padx=(0,4))
-        self.btn(btn_row, "🗑 Hapus",   self._delete, C_RED).pack(side="left", padx=4)
-        self.btn(btn_row, "✖ Bersihkan", self._clear, "#718096", fg="white").pack(side="left", padx=4)
+        self.btn(btn_row, "💾 Simpan",   self._save,   C_BLUE).pack(side="left", padx=(0, 4))
+        self.btn(btn_row, "🗑 Hapus",    self._delete, C_RED).pack(side="left", padx=4)
+        self.btn(btn_row, "✖ Bersihkan", self._clear,  "#718096", fg="white").pack(side="left", padx=4)
 
         # Treeview panel
         tv_card = tk.Frame(top, bg=C_WHITE,
@@ -73,20 +94,29 @@ class AnggotaPage(BasePage):
 
         cols = ("ID", "No. Anggota", "Nama", "Alamat", "No. HP", "Tgl Masuk")
         self._tv = self.make_tree(tv_card, cols, height=16)
-        widths = [40, 100, 180, 200, 120, 100]
+        widths  = [40, 100, 180, 200, 120, 100]
         anchors = ["center", "center", "w", "w", "center", "center"]
         for col, w, a in zip(cols, widths, anchors):
             self._tv.heading(col, text=col)
             self._tv.column(col, width=w, anchor=a)
         self._tv.column("ID", width=0, stretch=False)  # Sembunyikan ID
+
+        # Klik heading kolom untuk sort
+        for col in cols[1:]:  # skip ID
+            self._tv.heading(col, text=col,
+                             command=lambda c=col: self._sort_by(c))
+
         self._tv.bind("<<TreeviewSelect>>", self._on_select)
 
+    # ── Data ──────────────────────────────────────────────────────────
     def refresh(self):
         self._all_rows = []
         conn = get_conn()
         try:
             rows = conn.execute(
-                "SELECT id,no_anggota,nama,alamat,no_hp,tgl_masuk FROM anggota ORDER BY id"
+                """SELECT id, no_anggota, nama, alamat, no_hp, tgl_masuk
+                   FROM anggota
+                   ORDER BY CAST(SUBSTR(no_anggota, 5) AS INTEGER)"""
             ).fetchall()
             self._all_rows = [tuple(r) for r in rows]
         finally:
@@ -96,14 +126,44 @@ class AnggotaPage(BasePage):
     def _render(self, rows):
         self.tv_clear(self._tv)
         for r in rows:
-            self.tv_insert(self._tv, (r[0], r[1], r[2], r[3] or "-", r[4] or "-", r[5]))
+            self.tv_insert(self._tv, (r[0], r[1], r[2],
+                                      r[3] or "-", r[4] or "-", r[5]))
 
     def _filter(self):
         q = self._v_cari.get().lower()
+        if not q:
+            self._render(self._all_rows)
+            return
         filtered = [r for r in self._all_rows
                     if q in r[1].lower() or q in r[2].lower()]
         self._render(filtered)
 
+    # ── Sort kolom ────────────────────────────────────────────────────
+    _sort_asc = {}
+
+    def _sort_by(self, col):
+        col_map = {
+            "No. Anggota": 1, "Nama": 2,
+            "Alamat": 3, "No. HP": 4, "Tgl Masuk": 5
+        }
+        idx = col_map.get(col, 1)
+        asc = not self._sort_asc.get(col, True)
+        self._sort_asc[col] = asc
+
+        def key_fn(r):
+            val = r[idx] or ""
+            # Urutan numerik untuk No. Anggota
+            if col == "No. Anggota":
+                try:
+                    return int(val.split("-")[1])
+                except Exception:
+                    return 0
+            return val.lower()
+
+        sorted_rows = sorted(self._all_rows, key=key_fn, reverse=not asc)
+        self._render(sorted_rows)
+
+    # ── Pilih baris ───────────────────────────────────────────────────
     def _on_select(self, _=None):
         sel = self._tv.selection()
         if not sel:
@@ -116,6 +176,7 @@ class AnggotaPage(BasePage):
         self._v_hp.set(vals[4] if vals[4] != "-" else "")
         self._dp_tgl.set(vals[5])
 
+    # ── CRUD ──────────────────────────────────────────────────────────
     def _save(self):
         no   = self._v_no.get().strip()
         nama = self._v_nama.get().strip()
@@ -168,7 +229,8 @@ class AnggotaPage(BasePage):
 
     def _clear(self):
         self._sel_id = None
-        self._v_no.set("")
+        # Auto-generate nomor KOP berikutnya untuk tambah baru
+        self._v_no.set(self._next_no_anggota())
         self._v_nama.set("")
         self._v_almt.set("")
         self._v_hp.set("")

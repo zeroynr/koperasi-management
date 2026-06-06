@@ -208,7 +208,7 @@ class PinjamanPage(BasePage):
         conn = get_conn()
         try:
             rows = conn.execute(
-                "SELECT id, no_anggota, nama FROM anggota ORDER BY nama"
+                "SELECT id, no_anggota, nama FROM anggota ORDER BY CAST(SUBSTR(no_anggota,5) AS INTEGER)"
             ).fetchall()
         finally:
             conn.close()
