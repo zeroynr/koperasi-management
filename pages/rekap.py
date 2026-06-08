@@ -188,7 +188,7 @@ class RekapPage(BasePage):
         conn = get_conn()
         try:
             rows = conn.execute(
-                "SELECT id, nama, tahun, bulan_mulai, bulan_akhir, tgl_mulai, tgl_akhir "
+                "SELECT id, nama, tahun, bulan_mulai, bulan_akhir "
                 "FROM periode ORDER BY tahun DESC, id DESC"
             ).fetchall()
         finally:
@@ -212,8 +212,8 @@ class RekapPage(BasePage):
                 return f"{fallback_day:02d} {short} {fallback_y}"
 
             hari_akhir = monthrange(r["tahun"], r["bulan_akhir"])[1]
-            tgl_m = _to_label_date(r["tgl_mulai"],    1,          r["bulan_mulai"], r["tahun"])
-            tgl_a = _to_label_date(r["tgl_akhir"],  hari_akhir,   r["bulan_akhir"], r["tahun"])
+            tgl_m = _to_label_date(None, 1,          r["bulan_mulai"], r["tahun"])
+            tgl_a = _to_label_date(None, hari_akhir, r["bulan_akhir"], r["tahun"])
             label = f"{r['nama']}  [{tgl_m} – {tgl_a}]"
             opts.append(label)
             self._periode_map[label] = r["id"]

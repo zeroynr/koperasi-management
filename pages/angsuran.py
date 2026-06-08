@@ -602,6 +602,11 @@ class AngsuranPage(BasePage):
                     " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (pin["id"], ke, jumlah, tgl, _bulan, _tahun, "lunas"))
 
+                # ── Otomatis catat ke Buku Kas ──────────────────────
+                ags_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                from helpers import catat_kas_dari_angsuran
+                catat_kas_dari_angsuran(conn, ags_id, pin, ke, jumlah, tgl, _bulan, _tahun)
+
                 # Cek lunas berdasarkan nominal (pakai conn yang sama → data segar)
                 total_baru = self._total_bayar_dari_conn(conn, pin["id"])
                 sisa_baru  = max(0, w["total_wajib"] - total_baru)
@@ -688,6 +693,11 @@ class AngsuranPage(BasePage):
                 "INSERT INTO angsuran (pinjaman_id, ke, jumlah, tgl, bulan, tahun, status)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (pin["id"], bayar_kali + 1, sisa_rupiah, tgl, _bulan, _tahun, "lunas_semua"))
+            # ── Otomatis catat ke Buku Kas ──────────────────────────
+            ags_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            from helpers import catat_kas_dari_angsuran
+            catat_kas_dari_angsuran(conn, ags_id, pin, bayar_kali + 1,
+                                    sisa_rupiah, tgl, _bulan, _tahun)
             conn.execute("UPDATE pinjaman SET status='lunas' WHERE id=?", (pin["id"],))
             conn.commit()
             messagebox.showinfo("Berhasil",

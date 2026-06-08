@@ -137,5 +137,29 @@ def init_db():
         status      TEXT NOT NULL DEFAULT 'lunas',
         FOREIGN KEY (pinjaman_id) REFERENCES pinjaman(id) ON DELETE RESTRICT
     );
+    CREATE TABLE IF NOT EXISTS kas (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        periode_id   INTEGER,
+        bulan        INTEGER NOT NULL,
+        tahun        INTEGER NOT NULL,
+        tgl          TEXT NOT NULL,
+        no_bukti     TEXT,
+        no_urut      INTEGER,
+        uraian       TEXT NOT NULL,
+        keterangan   TEXT,
+        kas          REAL DEFAULT 0,
+        piutang      REAL DEFAULT 0,
+        jasa         REAL DEFAULT 0,
+        sim_wajib    REAL DEFAULT 0,
+        sihara       REAL DEFAULT 0,
+        sim_sukarela REAL DEFAULT 0,
+        simkus       REAL DEFAULT 0,
+        sim_pokok    REAL DEFAULT 0,
+        lain_lain    REAL DEFAULT 0,
+        jenis        TEXT DEFAULT 'masuk' CHECK(jenis IN ('masuk','keluar')),
+        keterangan_ref_angsuran INTEGER,
+        keterangan_ref_simpanan INTEGER,
+        FOREIGN KEY (periode_id) REFERENCES periode(id)
+    );
     """)
     c.commit(); c.close()

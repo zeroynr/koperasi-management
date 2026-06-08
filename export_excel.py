@@ -842,23 +842,30 @@ def _sheet_rekap_tahunan(wb, conn, periode_id=None, tahun=None):
 def _sheet_pinjaman(wb, conn, periode_id=None, tahun=None, bulan=None):
     ws = wb.create_sheet("Pinjaman")
     _no_grid(ws)
-    _title_block(ws, "KOPERASI LANGGENG", "DATA PINJAMAN ANGGOTA",
+    _title_block(ws, "KOPERASI LANGGENG", "DATA PINJAMAN ANGGOTA AKTIF",
                  _periode_info(conn, periode_id, tahun, bulan), 10)
     _header_row(ws,
-        ["No","No. Anggota","Nama","Jumlah Pinjaman","Jangka (bln)",
+        ["No","No. Anggota","Nama","Saldo Pinjaman (Rp)","Jangka (bln)",
          "Bunga/bln","Angsuran/bln","Tgl Pinjam","Keterangan","Status"], 4)
-    wh, wv = _where(periode_id, tahun, bulan, "p")
-    rows = conn.execute(f"""
+
+    # Pinjaman aktif diurutkan no_anggota — tidak difilter tahun
+    # karena saldo berasal dari 2025 dan masih aktif di 2026
+    rows = conn.execute("""
         SELECT a.no_anggota, a.nama, p.jumlah, p.jangka, p.bunga,
                p.tgl, p.keterangan, p.status
         FROM pinjaman p JOIN anggota a ON p.anggota_id=a.id
-        {wh} ORDER BY p.tgl DESC
-    """, wv).fetchall()
+        WHERE p.status='aktif'
+        ORDER BY CAST(SUBSTR(a.no_anggota,5) AS INTEGER), p.id
+    """).fetchall()
+
     total_jml = 0; aktif = 0; lunas = 0
     for i, r in enumerate(rows, 1):
-        ang = hitung_angsuran(r[2], r[3], r[4])
+        ang = hitung_angsuran(r[2], r[3], r[4]) if r[3] > 1 else r[2]
+        # Bersihkan keterangan: hilangkan prefix "Saldo pinjaman per 31/12/2025 - "
+        ket_raw = r[6] or "-"
+        ket_clean = ket_raw.replace("Saldo pinjaman per 31/12/2025 - ", "").strip()
         _data_cells(ws,
-            [i, r[0], r[1], r[2], r[3], r[4]/100, ang, r[5], r[6] or "-", r[7].upper()],
+            [i, r[0], r[1], r[2], r[3], r[4]/100, ang, r[5], ket_clean, r[7].upper()],
             i+4, num_cols=[4,7], alt=i%2==0)
         ws.cell(i+4, 6).number_format = "0.00%"
         ws.cell(i+4, 7).number_format = FMT_RP_Z
@@ -872,7 +879,7 @@ def _sheet_pinjaman(wb, conn, periode_id=None, tahun=None, bulan=None):
         ["","","TOTAL", total_jml,"","","","",
          f"Aktif:{aktif} Lunas:{lunas}", ""],
         len(rows)+5, num_cols=[4])
-    _set_widths(ws,{"A":4,"B":12,"C":24,"D":16,"E":10,"F":10,"G":14,"H":13,"I":22,"J":10})
+    _set_widths(ws,{"A":4,"B":12,"C":26,"D":18,"E":10,"F":10,"G":14,"H":13,"I":30,"J":10})
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -929,10 +936,14 @@ def _sheet_angsuran_matriks(wb, conn, tahun):
          [HEX["blue"] if b%2==1 else HEX["teal"] for b in range(1,13)] + [HEX["navy"]]
     _header_row(ws, hdrs, 4, cc)
 
+    # Ambil semua pinjaman aktif, urutkan no_anggota lalu pinjaman_id
     pinjaman = conn.execute("""
-        SELECT p.id, a.no_anggota, a.nama, p.keterangan
-        FROM pinjaman p JOIN anggota a ON p.anggota_id=a.id ORDER BY a.nama, p.id
+        SELECT p.id, a.no_anggota, a.nama
+        FROM pinjaman p JOIN anggota a ON p.anggota_id=a.id
+        WHERE p.status='aktif'
+        ORDER BY CAST(SUBSTR(a.no_anggota,5) AS INTEGER), p.id
     """).fetchall()
+
     raw = conn.execute("""
         SELECT pinjaman_id, bulan, SUM(jumlah)
         FROM angsuran WHERE tahun=? GROUP BY pinjaman_id, bulan
@@ -941,24 +952,42 @@ def _sheet_angsuran_matriks(wb, conn, tahun):
 
     grand = 0; ct = {b:0 for b in range(1,13)}
     for i, p in enumerate(pinjaman, 1):
-        lbl = f"{p[2]} ({p[3] or 'Pin.'+str(p[0])})"
-        rv = [i, p[1], lbl]; rt = 0
+        # Nama bersih tanpa keterangan
+        nama_bersih = p[2]
+        rv = [i, p[1], nama_bersih]; rt = 0
         for b in range(1,13):
             v = lkp.get((p[0],b), None)
             rv.append(v); rt += (v or 0); ct[b] += (v or 0)
-        rv.append(rt); grand += rt
+        rv.append(rt if rt > 0 else None)
+        grand += rt
         _data_cells(ws, rv, i+4, num_cols=list(range(4,17)), alt=i%2==0)
         for col in range(4,16):
             c = ws.cell(row=i+4, column=col)
-            if c.value is None: c.number_format = '"-"'
-            else: c.number_format = FMT_RP_Z
+            if c.value is None:
+                c.value = "-"
+                c.alignment = _al("center")
+                c.font = _f(size=9, color="AAAAAA")
+            else:
+                c.number_format = FMT_RP_Z
+        # Kolom TOTAL (16)
+        ct16 = ws.cell(row=i+4, column=16)
+        if ct16.value:
+            ct16.number_format = FMT_RP_Z
+        else:
+            ct16.value = "-"
+            ct16.alignment = _al("center")
+            ct16.font = _f(size=9, color="AAAAAA")
 
-    _total_cells(ws, ["","","TOTAL"]+[ct[b] for b in range(1,13)]+[grand],
-                 len(pinjaman)+5, num_cols=list(range(4,17)))
-    ws.column_dimensions["A"].width = 4; ws.column_dimensions["B"].width = 12
+    tot_vals = ["","","TOTAL"] + [ct[b] if ct[b] else None for b in range(1,13)] + [grand]
+    _total_cells(ws, tot_vals, len(pinjaman)+5, num_cols=list(range(4,17)))
+
+    ws.column_dimensions["A"].width = 4
+    ws.column_dimensions["B"].width = 11
     ws.column_dimensions["C"].width = 28
-    for b in range(1,13): ws.column_dimensions[_col(b+3)].width = 10
+    for b in range(1,13):
+        ws.column_dimensions[_col(b+3)].width = 12
     ws.column_dimensions[_col(16)].width = 14
+    ws.freeze_panes = "D5"
 
 
 def _sheet_neraca(wb, conn, periode_id=None, tahun=None):
@@ -1519,3 +1548,183 @@ def export_kartu_pinjaman(conn, filepath, tahun=None):
     _sheet_kartu_pinjaman(wb, conn, tahun_filter=thn)
     wb.save(filepath)
     return filepath
+
+def export_kas_bulan(bulan, tahun):
+    """
+    Export Buku Kas Masuk per bulan ke Excel.
+    Format mengikuti pinjaman.xlsx: header kop, sub-header kolom, data, baris TOTAL.
+    """
+    import os, sqlite3
+    from tkinter import filedialog, messagebox
+    from openpyxl import Workbook
+    from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side,
+                                  numbers)
+    from openpyxl.utils import get_column_letter
+    from database import get_conn
+
+    BULAN_NAMA = ["Januari","Februari","Maret","April","Mei","Juni",
+                  "Juli","Agustus","September","Oktober","November","Desember"]
+    bln_nama = BULAN_NAMA[bulan - 1]
+    bln_kode = bln_nama[:3].upper() + str(tahun)
+
+    # ── Ambil data ────────────────────────────────────────────────────
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT tgl, no_bukti, no_urut, uraian, keterangan,
+               kas, piutang, jasa, sim_wajib, sihara,
+               sim_sukarela, simkus, sim_pokok, lain_lain
+        FROM kas
+        WHERE bulan=? AND tahun=? AND jenis='masuk'
+        ORDER BY no_urut, id
+    """, (bulan, tahun)).fetchall()
+    conn.close()
+
+    if not rows:
+        messagebox.showwarning("Kosong", f"Tidak ada data kas untuk {bln_nama} {tahun}.")
+        return
+
+    # ── File dialog ───────────────────────────────────────────────────
+    path = filedialog.asksaveasfilename(
+        defaultextension=".xlsx",
+        filetypes=[("Excel", "*.xlsx")],
+        initialfile=f"kas_masuk_{bln_kode}.xlsx",
+        title="Simpan Export Kas"
+    )
+    if not path:
+        return
+
+    # ── Style helpers ─────────────────────────────────────────────────
+    def _fill(hex_):  return PatternFill("solid", fgColor=hex_)
+    def _font(bold=False, sz=10, color="000000"):
+        return Font(bold=bold, size=sz, color=color)
+    def _ali(h="center", v="center", wrap=False):
+        return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
+    def _brd(top=None, bot=None, left=None, right=None, color="000000"):
+        s = lambda x: Side(style=x, color=color) if x else Side(style=None)
+        return Border(top=s(top), bottom=s(bot), left=s(left), right=s(right))
+    FMT_RP = '#,##0'
+    THIN   = "thin"
+    HDR_BG = "1F497D"   # biru tua header
+    SUB_BG = "BDD7EE"   # biru muda sub-header
+    TTL_BG = "FFFF00"   # kuning baris total
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"KAS {bln_kode}"
+
+    # ── Kolom & lebar ────────────────────────────────────────────────
+    # A=BULAN B=NO_BUKTI C=NO_URUT D=URAIAN E=KE/KET
+    # F=KAS G=PIUTANG H=JASA I=SIM_WAJIB J=SIHARA K=S_SUKARELA L=SIMKUS M=SIMP_POKOK N=LAIN
+    widths = [10, 9, 5, 28, 9, 14, 14, 12, 14, 10, 13, 10, 13, 12]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── Baris 1: judul koperasi ───────────────────────────────────────
+    ws.merge_cells("A1:N1")
+    c = ws["A1"]
+    c.value = "KPRI LANGGENG  - SMKN 2 BUDURAN"
+    c.font = _font(bold=True, sz=12, color="FFFFFF")
+    c.fill = _fill(HDR_BG)
+    c.alignment = _ali()
+
+    # ── Baris 2: judul buku kas ───────────────────────────────────────
+    ws.merge_cells("A2:N2")
+    c = ws["A2"]
+    c.value = f"BUKU KAS  MASUK - {bln_nama.upper()} {tahun}"
+    c.font = _font(bold=True, sz=11, color="FFFFFF")
+    c.fill = _fill(HDR_BG)
+    c.alignment = _ali()
+
+    # ── Baris 3: header kolom utama ───────────────────────────────────
+    headers1 = ["BULAN","NO BUKTI","URAIAN","ke","DEBET",
+                "","","","","","","","",""]
+    # DEBET mencakup F-N
+    ws.merge_cells("A3:A4"); ws.merge_cells("B3:B4")
+    ws.merge_cells("C3:C4"); ws.merge_cells("D3:D4"); ws.merge_cells("E3:E4")
+    ws.merge_cells("F3:N3")
+
+    for col, val in zip("ABCDEF", ["BULAN","NO BUKTI","","URAIAN","ke","DEBET"]):
+        c = ws[f"{col}3"]
+        c.value = val
+        c.font = _font(bold=True, sz=9, color="000000")
+        c.fill = _fill(SUB_BG)
+        c.alignment = _ali(wrap=True)
+        c.border = _brd(THIN, THIN, THIN, THIN)
+    ws["C3"].value = "NO"
+
+    # ── Baris 4: sub-header nominal ───────────────────────────────────
+    sub_hdrs = ["KAS","PIUTANG UANG","JASA","SIMPANAN WAJIB",
+                "SIHARA","S SUKARELA","SIMKUS","SIMP POKOK","LAIN-LAIN"]
+    for i, hdr in enumerate(sub_hdrs):
+        col = get_column_letter(6 + i)
+        c = ws[f"{col}4"]
+        c.value = hdr
+        c.font = _font(bold=True, sz=8, color="000000")
+        c.fill = _fill(SUB_BG)
+        c.alignment = _ali(wrap=True)
+        c.border = _brd(THIN, THIN, THIN, THIN)
+
+    # Fix border baris 3 utk kolom yg di-merge
+    for col in "ABCDE":
+        for r in [3, 4]:
+            ws[f"{col}{r}"].border = _brd(THIN, THIN, THIN, THIN)
+
+    # ── Data rows ─────────────────────────────────────────────────────
+    start_row = 5
+    totals    = [0.0] * 9  # F..N
+
+    for i, row in enumerate(rows):
+        r = start_row + i
+        tgl_val, no_bukti, no_urut, uraian, ket = row[0], row[1], row[2], row[3], row[4]
+        noms = [row[5], row[6], row[7], row[8], row[9], row[10], row[11], row[12], row[13]]
+
+        # Cari bln_kode dari tanggal
+        bulan_label = bln_kode
+
+        vals = [bulan_label, no_bukti, no_urut, uraian, ket] + noms
+        cols = list("ABCDE") + [get_column_letter(6+j) for j in range(9)]
+        for col, val in zip(cols, vals):
+            c = ws[f"{col}{r}"]
+            c.value = val if val else None
+            c.font  = _font(sz=9)
+            c.border = _brd(THIN, THIN, THIN, THIN)
+            if col in [get_column_letter(6+j) for j in range(9)]:
+                c.alignment = _ali(h="right")
+                c.number_format = FMT_RP
+            elif col == "D":
+                c.alignment = _ali(h="left")
+            else:
+                c.alignment = _ali()
+
+        for j, n in enumerate(noms):
+            totals[j] += float(n or 0)
+
+    # ── Baris TOTAL ───────────────────────────────────────────────────
+    tot_row = start_row + len(rows)
+    ws.merge_cells(f"A{tot_row}:E{tot_row}")
+    c = ws[f"A{tot_row}"]
+    c.value = "TOTAL"
+    c.font = _font(bold=True, sz=10)
+    c.fill = _fill(TTL_BG)
+    c.alignment = _ali()
+    c.border = _brd(THIN, THIN, THIN, THIN)
+
+    for j, tot in enumerate(totals):
+        col = get_column_letter(6 + j)
+        c = ws[f"{col}{tot_row}"]
+        c.value = tot if tot else None
+        c.font  = _font(bold=True, sz=10)
+        c.fill  = _fill(TTL_BG)
+        c.number_format = FMT_RP
+        c.alignment = _ali(h="right")
+        c.border = _brd(THIN, THIN, THIN, THIN)
+
+    # Fix merge border ABCDE kolom header row 3-4
+    for col in "ABCDE":
+        for rr in range(3, 5):
+            ws[f"{col}{rr}"].border = _brd(THIN, THIN, THIN, THIN)
+
+    ws.freeze_panes = "A5"
+    wb.save(path)
+    messagebox.showinfo("Export Berhasil",
+                        f"Buku Kas {bln_nama} {tahun} berhasil disimpan ke:\n{path}")

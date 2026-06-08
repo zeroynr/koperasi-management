@@ -139,6 +139,8 @@ class KoperasiApp(tk.Tk):
             ("Angsuran",        "angsuran",   "▸"),
             (None,None,None),
             ("Rekap & Export",  "rekap",      "▸"),
+            (None,None,None),
+            ("Buku Kas",        "kas",        "▸"),
         ]
         self._nav_btns = {}
         for label,key,icon in menus:
@@ -184,6 +186,7 @@ class KoperasiApp(tk.Tk):
         from pages.pinjaman  import PinjamanPage
         from pages.angsuran  import AngsuranPage
         from pages.rekap     import RekapPage
+        from pages.kas       import KasPage
 
         builders = {
             "dashboard": DashboardPage,
@@ -193,12 +196,14 @@ class KoperasiApp(tk.Tk):
             "pinjaman":  PinjamanPage,
             "angsuran":  AngsuranPage,
             "rekap":     RekapPage,
+            "kas":       KasPage,
         }
         titles = {
             "dashboard":"Dashboard","periode":"Manajemen Periode",
             "anggota":"Data Anggota","simpanan":"Kelola Simpanan",
             "pinjaman":"Pinjaman","angsuran":"Angsuran",
             "rekap":"Rekap & Export Excel",
+            "kas":"Buku Kas Masuk",
         }
         for k,b in self._nav_btns.items():
             b.config(bg=C_SEL if k==key else C_NAV,

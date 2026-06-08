@@ -25,17 +25,23 @@ CAL_BORDER = "#E2E8F0"
 
 class CalendarPopup(tk.Toplevel):
     """
-    Popup kalender.
-    - Klik tanggal        -> pilih & tutup
-    - Escape              -> tutup
-    - Klik di luar popup  -> tutup (via grab_set)
-    - Dropdown bulan/tahun TIDAK menutup popup
+    Popup kalender - style gambar 1:
+    Title bar 'Pilih Tanggal' + nav bar ◀▶ + dropdown tahun + footer Hari ini.
     """
+    NAV_BG   = "#2B6CB0"
+    HEAD_BG  = "#EBF8FF"
+    SEL_BG   = "#2B6CB0"
+    SEL_FG   = "white"
+    TODAY_FG = "#C05621"
+    DAY_FG   = "#1E293B"
+    HOVER_BG = "#EBF8FF"
+
     def __init__(self, parent, current_date=None, on_select=None):
         super().__init__(parent)
-        self.overrideredirect(True)
+        self.title("Pilih Tanggal")
+        self.resizable(False, False)
         self.attributes("-topmost", True)
-        self.configure(bg=CAL_BORDER)
+        self.configure(bg="white")
         self._on_select = on_select
         self._alive     = True
 
@@ -51,95 +57,96 @@ class CalendarPopup(tk.Toplevel):
         self._view_year  = self._cur.year
         self._view_month = self._cur.month
         self._today      = today
+        self._yv         = tk.StringVar(value=str(self._view_year))
 
-        self._main = tk.Frame(self, bg=CAL_BG, padx=1, pady=1)
+        self._main = tk.Frame(self, bg="white", padx=6, pady=6)
         self._main.pack(fill="both", expand=True)
 
         self._draw()
         self.bind("<Escape>", lambda e: self._close())
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _fmt(self, d):
+        return f"{d.day:02d} {BULAN_NAMA[d.month]} {d.year}"
 
     def _draw(self):
         for w in self._main.winfo_children():
             w.destroy()
 
-        hdr = tk.Frame(self._main, bg=CAL_HDR, pady=6)
-        hdr.pack(fill="x")
-
-        tk.Button(hdr, text=chr(8249), font=("Arial", 12, "bold"),
-                  bg=CAL_HDR, fg="white", bd=0, padx=8, cursor="hand2",
-                  activebackground="#2D4A6E", activeforeground="white",
-                  command=self._prev_month).pack(side="left", padx=4)
-
-        month_names = [BULAN_NAMA[m] for m in range(1, 13)]
-        self._mv = tk.StringVar(value=BULAN_NAMA[self._view_month])
-        self._yv = tk.StringVar(value=str(self._view_year))
-
-        cb_m = ttk.Combobox(hdr, textvariable=self._mv, values=month_names,
-                             width=9, state="readonly", font=("Arial", 9, "bold"))
-        cb_m.pack(side="left", padx=2)
-        cb_m.bind("<<ComboboxSelected>>", self._on_month_change)
-
-        years = [str(y) for y in range(2000, self._today.year + 10)]
-        cb_y = ttk.Combobox(hdr, textvariable=self._yv, values=years,
-                             width=5, state="readonly", font=("Arial", 9, "bold"))
-        cb_y.pack(side="left", padx=2)
-        cb_y.bind("<<ComboboxSelected>>", self._on_year_change)
-
-        tk.Button(hdr, text=chr(8250), font=("Arial", 12, "bold"),
-                  bg=CAL_HDR, fg="white", bd=0, padx=8, cursor="hand2",
-                  activebackground="#2D4A6E", activeforeground="white",
-                  command=self._next_month).pack(side="right", padx=4)
-
-        tk.Button(hdr, text="Hari ini", font=("Arial", 7),
-                  bg="#2B6CB0", fg="white", bd=0, padx=6, pady=1,
+        # Nav bar
+        nav = tk.Frame(self._main, bg=self.NAV_BG)
+        nav.pack(fill="x", pady=(0, 4))
+        tk.Button(nav, text="◀", bg=self.NAV_BG, fg="white",
+                  font=("Arial", 10, "bold"), relief="flat", bd=0,
                   cursor="hand2", activebackground="#1A4F8A",
-                  command=self._go_today).pack(side="right", padx=4)
+                  command=self._prev_month).pack(side="left", padx=4, pady=4)
+        tk.Label(nav, text=f"{BULAN_NAMA[self._view_month]} {self._view_year}",
+                 font=("Arial", 10, "bold"), bg=self.NAV_BG,
+                 fg="white").pack(side="left", expand=True)
+        tk.Button(nav, text="▶", bg=self.NAV_BG, fg="white",
+                  font=("Arial", 10, "bold"), relief="flat", bd=0,
+                  cursor="hand2", activebackground="#1A4F8A",
+                  command=self._next_month).pack(side="right", padx=4, pady=4)
 
-        day_hdr = tk.Frame(self._main, bg=CAL_BG, pady=4)
-        day_hdr.pack(fill="x", padx=6)
+        # Dropdown tahun
+        yf = tk.Frame(self._main, bg="white")
+        yf.pack(fill="x", pady=(0, 4))
+        tk.Label(yf, text="Tahun:", font=("Arial", 8),
+                 bg="white", fg="#64748B").pack(side="left")
+        self._yv.set(str(self._view_year))
+        years = [str(y) for y in range(self._today.year - 10,
+                                       self._today.year + 11)]
+        cb = ttk.Combobox(yf, textvariable=self._yv, values=years,
+                          width=6, state="readonly", font=("Arial", 8))
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", self._on_year_change)
+
+        # Header hari
+        hdr_f = tk.Frame(self._main, bg=self.HEAD_BG)
+        hdr_f.pack(fill="x")
         for i, d in enumerate(["Sen","Sel","Rab","Kam","Jum","Sab","Min"]):
-            fg = CAL_WEEKEND if i == 6 else CAL_WK
-            tk.Label(day_hdr, text=d, font=("Arial", 8, "bold"),
-                     bg=CAL_BG, fg=fg, width=3, anchor="center").pack(side="left", padx=2)
+            fg = "#C05621" if i == 6 else "#1E293B"
+            tk.Label(hdr_f, text=d, font=("Arial", 8, "bold"),
+                     bg=self.HEAD_BG, fg=fg, width=4,
+                     anchor="center").pack(side="left", padx=1)
 
-        tk.Frame(self._main, bg=CAL_BORDER, height=1).pack(fill="x", padx=6)
-
-        grid_frame = tk.Frame(self._main, bg=CAL_BG, pady=4)
-        grid_frame.pack(padx=6, pady=(2, 6))
-
-        for row_i, week in enumerate(calendar.monthcalendar(self._view_year, self._view_month)):
+        # Grid hari
+        grid_f = tk.Frame(self._main, bg="white")
+        grid_f.pack()
+        for week in calendar.monthcalendar(self._view_year, self._view_month):
+            row_f = tk.Frame(grid_f, bg="white")
+            row_f.pack()
             for col_i, day in enumerate(week):
-                is_sunday = (col_i == 6)
-                is_today  = (day == self._today.day and
-                             self._view_month == self._today.month and
-                             self._view_year  == self._today.year)
-                is_sel    = (day == self._cur.day and
-                             self._view_month == self._cur.month and
-                             self._view_year  == self._cur.year)
-
                 if day == 0:
-                    tk.Label(grid_frame, text="", width=3, height=1,
-                             bg=CAL_BG).grid(row=row_i, column=col_i, padx=2, pady=1)
+                    tk.Label(row_f, text="", width=4, font=("Arial", 9),
+                             bg="white").pack(side="left", padx=1, pady=1)
                     continue
+                d = date(self._view_year, self._view_month, day)
+                is_sel   = (d == self._cur)
+                is_today = (d == self._today)
+                is_sun   = (col_i == 6)
+                bg  = self.SEL_BG if is_sel else "white"
+                fg  = self.SEL_FG if is_sel else                       (self.TODAY_FG if is_today else
+                       ("#C05621" if is_sun else self.DAY_FG))
+                fnt = ("Arial", 9, "bold") if (is_sel or is_today)                       else ("Arial", 9)
+                btn = tk.Button(row_f, text=str(day), width=3, font=fnt,
+                                bg=bg, fg=fg, relief="flat", bd=0,
+                                cursor="hand2",
+                                command=lambda dd=d: self._select_date(dd))
+                btn.pack(side="left", padx=1, pady=1)
+                if not is_sel:
+                    btn.bind("<Enter>",
+                             lambda e, b=btn: b.config(bg=self.HOVER_BG))
+                    btn.bind("<Leave>",
+                             lambda e, b=btn, bg_=bg: b.config(bg=bg_))
 
-                if is_sel:
-                    bg_c, fg_c, fnt = CAL_SEL, "white", ("Arial", 9, "bold")
-                elif is_today:
-                    bg_c, fg_c, fnt = CAL_TODAY, "white", ("Arial", 9, "bold")
-                else:
-                    bg_c = CAL_BG
-                    fg_c = CAL_WEEKEND if is_sunday else "#1E293B"
-                    fnt  = ("Arial", 9)
-
-                lbl = tk.Label(grid_frame, text=str(day), font=fnt,
-                               bg=bg_c, fg=fg_c, width=3, height=1,
-                               cursor="hand2", relief="flat", anchor="center")
-                lbl.grid(row=row_i, column=col_i, padx=2, pady=1)
-                _day = day
-                lbl.bind("<Enter>", lambda e, b=lbl, s=is_sel, t=is_today:
-                         b.config(bg=CAL_HOVER if not (s or t) else b.cget("bg")))
-                lbl.bind("<Leave>", lambda e, b=lbl, bg=bg_c: b.config(bg=bg))
-                lbl.bind("<Button-1>", lambda e, d=_day: self._select(d))
+        # Footer
+        tk.Button(self._main,
+                  text=f"📅 Hari ini: {self._fmt(self._today)}",
+                  font=("Arial", 8), bg="#F0FFF4", fg="#276749",
+                  relief="flat", cursor="hand2",
+                  command=lambda: self._select_date(self._today)
+                  ).pack(fill="x", pady=(6, 0))
 
     def _prev_month(self):
         if self._view_month == 1:
@@ -155,33 +162,23 @@ class CalendarPopup(tk.Toplevel):
             self._view_month += 1
         self._draw()
 
-    def _go_today(self):
-        t = date.today()
-        self._view_year, self._view_month, self._cur = t.year, t.month, t
-        self._draw()
-        if self._on_select:
-            self._on_select(t)
-        self._close()
-
-    def _on_month_change(self, _=None):
-        for k, v in BULAN_NAMA.items():
-            if v == self._mv.get():
-                self._view_month = k; break
-        self._draw()
-
     def _on_year_change(self, _=None):
         try:
             self._view_year = int(self._yv.get())
+            self._draw()
         except ValueError:
             pass
-        self._draw()
 
-    def _select(self, day):
-        sel = date(self._view_year, self._view_month, day)
-        self._cur = sel
+    def _select_date(self, d):
+        self._cur = d
         if self._on_select:
-            self._on_select(sel)
+            self._on_select(d)
         self._close()
+
+    # Compat aliases
+    def _go_today(self):      self._select_date(date.today())
+    def _select(self, day):   self._select_date(date(self._view_year, self._view_month, day))
+    def _on_month_change(self, _=None): pass
 
     def _close(self):
         if not self._alive:
@@ -197,7 +194,6 @@ class CalendarPopup(tk.Toplevel):
             pass
 
     def position_near(self, widget):
-        """Tampilkan popup di bawah widget, tangkap semua klik via grab_set."""
         self.update_idletasks()
         wx = widget.winfo_rootx()
         wy = widget.winfo_rooty() + widget.winfo_height() + 2
@@ -208,8 +204,6 @@ class CalendarPopup(tk.Toplevel):
         self.geometry(f"+{wx}+{wy}")
         self.lift()
         self.focus_set()
-        # grab_set: semua event mouse masuk ke popup ini
-        # sehingga klik di luar bisa dideteksi
         self.after(50, self._activate_grab)
 
     def _activate_grab(self):
@@ -219,98 +213,66 @@ class CalendarPopup(tk.Toplevel):
             self.grab_set()
         except Exception:
             pass
-        # Klik di popup → cek apakah di luar area kotak
         self.bind("<ButtonPress-1>", self._check_outside)
 
     def _check_outside(self, event):
-        """Dipanggil setiap klik saat grab aktif.
-        Tutup hanya jika klik di luar kotak kalender."""
         if not self._alive:
             return
         try:
-            self.update_idletasks()
-            # Widget mana yang diklik?
-            clicked = event.widget
-            # Cek apakah widget tsb ada di dalam hierarki popup ini
-            w = clicked
+            w = event.widget
             while w is not None:
                 if str(w) == str(self):
-                    return   # klik di dalam popup, biarkan
+                    return
                 try:
                     w = w.nametowidget(w.winfo_parent())
                 except Exception:
                     break
         except Exception:
             pass
-        # Sampai sini = klik di luar popup
         self._close()
 
 
 class DatePickerWidget(tk.Frame):
     """
     Input tanggal dengan tombol kalender popup.
-    get()  → 'YYYY-MM-DD'
-    set()  → dari 'YYYY-MM-DD'
+    Interface sama persis dengan versi lama:
+      .get()       → 'YYYY-MM-DD'
+      .set(str)    → dari 'YYYY-MM-DD'
+      ._set_today()
     """
-    _valid = True
-
     def __init__(self, parent, label="Tanggal", default=None, **kw):
         bg = kw.pop("bg", parent.cget("bg"))
         super().__init__(parent, bg=bg, **kw)
         self._popup = None
 
-        tk.Label(self, text=label, font=("Arial", 9),
-                 bg=bg, fg="#64748B").grid(row=0, column=0, columnspan=6,
-                                           sticky="w", pady=(2, 1))
+        if label:
+            tk.Label(self, text=label, font=("Arial", 9),
+                     bg=bg, fg="#64748B").grid(row=0, column=0, columnspan=2,
+                                               sticky="w", pady=(2, 1))
 
-        self._d = tk.StringVar()
-        self._m = tk.StringVar()
-        self._y = tk.StringVar()
+        today = date.today()
+        self._date = today
 
-        vd = (self.register(lambda v: len(v) <= 2 and (v == "" or v.isdigit())), "%P")
-        vm = (self.register(lambda v: len(v) <= 2 and (v == "" or v.isdigit())), "%P")
-        vy = (self.register(lambda v: len(v) <= 4 and (v == "" or v.isdigit())), "%P")
+        self._var = tk.StringVar(value=self._fmt_display(today))
 
-        self._ed = ttk.Entry(self, textvariable=self._d, width=3,
-                             validate="key", validatecommand=vd, justify="center")
-        self._em = ttk.Entry(self, textvariable=self._m, width=3,
-                             validate="key", validatecommand=vm, justify="center")
-        self._ey = ttk.Entry(self, textvariable=self._y, width=5,
-                             validate="key", validatecommand=vy, justify="center")
+        self._entry = ttk.Entry(self, textvariable=self._var, width=16,
+                                state="readonly", font=("Arial", 9))
+        self._entry.grid(row=1, column=0, padx=(0, 2))
 
-        self._ed.grid(row=1, column=0, padx=(0, 1))
-        tk.Label(self, text="/", bg=bg, fg="#64748B").grid(row=1, column=1)
-        self._em.grid(row=1, column=2, padx=1)
-        tk.Label(self, text="/", bg=bg, fg="#64748B").grid(row=1, column=3)
-        self._ey.grid(row=1, column=4, padx=(1, 2))
-
-        self._cal_btn = tk.Button(self, text="📅", font=("Arial", 10),
-                                   bg="#EBF8FF", fg="#2B6CB0", bd=0,
-                                   padx=4, pady=0, cursor="hand2",
-                                   activebackground="#DBEAFE",
-                                   command=self._open_calendar)
-        self._cal_btn.grid(row=1, column=5, padx=(2, 0))
-
-        self._lbl_err = tk.Label(self, text="", font=("Arial", 7),
-                                  bg=bg, fg=C_ERR)
-        self._lbl_err.grid(row=2, column=0, columnspan=6, sticky="w")
-
-        for var in (self._d, self._m, self._y):
-            var.trace_add("write", lambda *_: self._validate())
-
-        self._ed.bind("<FocusOut>",   lambda e: (self._pad(self._d, 2), self._validate()))
-        self._em.bind("<FocusOut>",   lambda e: (self._pad(self._m, 2), self._validate()))
-        self._ey.bind("<FocusOut>",   lambda e: self._validate())
-        self._ed.bind("<KeyRelease>", lambda e: self._auto_next(self._d, 2, self._em))
-        self._em.bind("<KeyRelease>", lambda e: self._auto_next(self._m, 2, self._ey))
+        self._btn = tk.Button(self, text="📅", font=("Arial", 10),
+                               bg="#EBF8FF", fg="#2B6CB0", bd=0,
+                               padx=4, pady=0, cursor="hand2",
+                               activebackground="#DBEAFE",
+                               command=self._open_calendar)
+        self._btn.grid(row=1, column=1)
 
         if default:
             self.set(default)
-        else:
-            self._set_today()
+
+    def _fmt_display(self, d):
+        return f"{d.day:02d} {BULAN_NAMA[d.month]} {d.year}"
 
     def _open_calendar(self):
-        # Jika popup sudah ada dan masih hidup, tutup dulu
         if self._popup is not None:
             try:
                 if self._popup._alive:
@@ -323,62 +285,38 @@ class DatePickerWidget(tk.Frame):
 
         popup = CalendarPopup(self, current_date=self.get() or None,
                               on_select=self._from_calendar)
-        popup.position_near(self._cal_btn)
+        popup.position_near(self._btn)
         self._popup = popup
 
     def _from_calendar(self, d: date):
-        self._d.set(f"{d.day:02d}")
-        self._m.set(f"{d.month:02d}")
-        self._y.set(str(d.year))
+        self._date = d
+        self._var.set(self._fmt_display(d))
 
     def _set_today(self):
         t = date.today()
-        self._d.set(f"{t.day:02d}")
-        self._m.set(f"{t.month:02d}")
-        self._y.set(str(t.year))
-
-    def _pad(self, var, n):
-        v = var.get()
-        if v and len(v) < n:
-            var.set(v.zfill(n))
-
-    def _auto_next(self, var, maxlen, nxt):
-        if len(var.get()) == maxlen:
-            nxt.focus()
-
-    def _validate(self):
-        d = self._d.get()
-        m = self._m.get()
-        y = self._y.get()
-        if not d and not m and not y:
-            self._lbl_err.config(text="")
-            self._valid = False
-            return
-        try:
-            _ = date(int(y), int(m), int(d))
-            self._lbl_err.config(text="")
-            self._valid = True
-        except Exception:
-            self._lbl_err.config(text="Tanggal tidak valid")
-            self._valid = False
+        self._date = t
+        self._var.set(self._fmt_display(t))
 
     def get(self):
-        try:
-            return date(int(self._y.get()), int(self._m.get()), int(self._d.get())).strftime("%Y-%m-%d")
-        except Exception:
-            return ""
+        return self._date.strftime("%Y-%m-%d") if self._date else ""
 
     def set(self, date_str):
+        if not date_str:
+            return
         try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
-            self._d.set(f"{dt.day:02d}")
-            self._m.set(f"{dt.month:02d}")
-            self._y.set(str(dt.year))
+            if isinstance(date_str, str):
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
+            elif isinstance(date_str, date):
+                d = date_str
+            else:
+                return
+            self._date = d
+            self._var.set(self._fmt_display(d))
         except Exception:
             pass
 
     def is_valid(self):
-        return self._valid
+        return self._date is not None
 
 
 class MonthYearPicker(tk.Frame):

@@ -286,6 +286,16 @@ class SimpananPage(BasePage):
                 conn.execute(
                     "INSERT INTO simpanan (anggota_id,jenis,jumlah,tgl,bulan,tahun,periode_id,keterangan) VALUES (?,?,?,?,?,?,?,?)",
                     (anggota_id, jenis, jumlah, tgl, _bulan, _tahun, _periode_id, ket or None))
+
+                # ── Otomatis catat ke Buku Kas ──────────────────────
+                simp_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                nama_anggota = conn.execute(
+                    "SELECT nama FROM anggota WHERE id=?", (anggota_id,)
+                ).fetchone()[0]
+                from helpers import catat_kas_dari_simpanan
+                catat_kas_dari_simpanan(conn, simp_id, nama_anggota, jenis,
+                                        jumlah, tgl, _bulan, _tahun)
+
                 messagebox.showinfo("Berhasil", "Simpanan berhasil dicatat.")
             conn.commit()
         except Exception as e:
