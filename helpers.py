@@ -127,3 +127,68 @@ def catat_kas_dari_simpanan(conn, simpanan_id, anggota_nama, jenis,
     last_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.execute(f"UPDATE kas SET {col}=?, kas=? WHERE id=?",
                  (jumlah, jumlah, last_id))
+
+
+def update_kas_dari_simpanan(conn, simpanan_id, anggota_nama, jenis, jumlah, tgl, bulan, tahun):
+    """Update baris kas yang terhubung ke simpanan_id."""
+    col_map = {
+        "wajib": "sim_wajib", "sukarela": "sim_sukarela",
+        "pokok": "sim_pokok", "sihara": "sihara", "simkus": "simkus",
+    }
+    col = col_map.get(jenis, "sim_wajib")
+    ket_kode = {"wajib":"SW","sukarela":"SK","pokok":"SP",
+                "sihara":"SHR","simkus":"SIMKUS"}.get(jenis, "")
+    periode_id = conn.execute(
+        "SELECT id FROM periode WHERE tahun=? LIMIT 1", (tahun,)
+    ).fetchone()
+    periode_id = periode_id[0] if periode_id else None
+
+    # Nol-kan semua kolom nominal dulu, lalu set kolom yang benar
+    conn.execute(f"""
+        UPDATE kas SET
+            uraian=?, keterangan=?, tgl=?, bulan=?, tahun=?, periode_id=?,
+            kas=?, sim_wajib=0, sihara=0, sim_sukarela=0,
+            simkus=0, sim_pokok=0, lain_lain=0, {col}=?
+        WHERE keterangan_ref_simpanan=?
+    """, (anggota_nama.upper(), ket_kode, tgl, bulan, tahun, periode_id,
+          jumlah, jumlah, simpanan_id))
+
+
+def hapus_kas_dari_simpanan(conn, simpanan_id):
+    """Hapus baris kas yang terhubung ke simpanan_id."""
+    conn.execute("DELETE FROM kas WHERE keterangan_ref_simpanan=?",
+                 (simpanan_id,))
+
+
+def update_kas_dari_angsuran(conn, angsuran_id, pin, ke, jumlah, tgl, bulan, tahun):
+    """Update baris kas yang terhubung ke angsuran_id."""
+    periode_id = conn.execute(
+        "SELECT id FROM periode WHERE tahun=? LIMIT 1", (tahun,)
+    ).fetchone()
+    periode_id = periode_id[0] if periode_id else None
+
+    saldo  = float(pin.get("jumlah", 0))
+    bunga  = float(pin.get("bunga", 1.0))
+    jasa   = round(saldo * bunga / 100)
+    piutang = max(0, jumlah - jasa)
+
+    nama_row = conn.execute(
+        "SELECT a.nama FROM anggota a JOIN pinjaman p ON p.anggota_id=a.id WHERE p.id=?",
+        (pin["id"],)
+    ).fetchone()
+    nama = nama_row[0] if nama_row else "?"
+    ket  = f"{pin.get('jangka', 0)}/'{ke}"
+
+    conn.execute("""
+        UPDATE kas SET
+            uraian=?, keterangan=?, tgl=?, bulan=?, tahun=?, periode_id=?,
+            kas=?, piutang=?, jasa=?
+        WHERE keterangan_ref_angsuran=?
+    """, (nama.upper(), ket, tgl, bulan, tahun, periode_id,
+          jumlah, piutang, jasa, angsuran_id))
+
+
+def hapus_kas_dari_angsuran(conn, angsuran_id):
+    """Hapus baris kas yang terhubung ke angsuran_id."""
+    conn.execute("DELETE FROM kas WHERE keterangan_ref_angsuran=?",
+                 (angsuran_id,))

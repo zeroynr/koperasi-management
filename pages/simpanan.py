@@ -270,9 +270,22 @@ class SimpananPage(BasePage):
         conn = get_conn()
         try:
             if self._sel_id:
+                from datetime import datetime as _dt
+                try:
+                    _d = _dt.strptime(tgl, "%Y-%m-%d")
+                    _bulan, _tahun = _d.month, _d.year
+                except Exception:
+                    _bulan, _tahun = None, None
                 conn.execute(
                     "UPDATE simpanan SET anggota_id=?,jenis=?,jumlah=?,tgl=?,keterangan=? WHERE id=?",
                     (anggota_id, jenis, jumlah, tgl, ket or None, self._sel_id))
+                # ── Otomatis update baris kas ────────────────────────
+                nama_anggota = conn.execute(
+                    "SELECT nama FROM anggota WHERE id=?", (anggota_id,)
+                ).fetchone()[0]
+                from helpers import update_kas_dari_simpanan
+                update_kas_dari_simpanan(conn, self._sel_id, nama_anggota,
+                                         jenis, jumlah, tgl, _bulan, _tahun)
                 messagebox.showinfo("Berhasil", "Data simpanan diperbarui.")
             else:
                 from datetime import datetime as _dt
@@ -313,6 +326,9 @@ class SimpananPage(BasePage):
             return
         conn = get_conn()
         try:
+            # ── Hapus baris kas terkait dulu ────────────────────────
+            from helpers import hapus_kas_dari_simpanan
+            hapus_kas_dari_simpanan(conn, self._sel_id)
             conn.execute("DELETE FROM simpanan WHERE id=?", (self._sel_id,))
             conn.commit()
             messagebox.showinfo("Berhasil", "Data simpanan dihapus.")

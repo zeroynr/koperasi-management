@@ -553,6 +553,12 @@ class AngsuranPage(BasePage):
                     "UPDATE angsuran SET ke=?, jumlah=?, tgl=? WHERE id=?",
                     (ke, jumlah, tgl, self._sel_id))
 
+                # ── Otomatis update baris kas ────────────────────────
+                from helpers import update_kas_dari_angsuran
+                _bulan2, _tahun2 = _parse_tgl(tgl)
+                update_kas_dari_angsuran(conn, self._sel_id, pin,
+                                         ke, jumlah, tgl, _bulan2, _tahun2)
+
                 total_baru = self._total_bayar_dari_conn(conn, pin["id"])
                 sisa_baru  = max(0, w["total_wajib"] - total_baru)
                 if sisa_baru <= 0:
@@ -721,6 +727,9 @@ class AngsuranPage(BasePage):
         conn = get_conn()
         try:
             ag = conn.execute("SELECT * FROM angsuran WHERE id=?", (self._sel_id,)).fetchone()
+            # ── Hapus baris kas terkait dulu ────────────────────────
+            from helpers import hapus_kas_dari_angsuran
+            hapus_kas_dari_angsuran(conn, self._sel_id)
             conn.execute("DELETE FROM angsuran WHERE id=?", (self._sel_id,))
             conn.execute(
                 "UPDATE pinjaman SET status='aktif' WHERE id=? AND status='lunas'",
